@@ -46,5 +46,9 @@ tmp/
 *.swp
 *.swo
 
+# Node.js
+infra/gateway/node_modules/
+
 # work
 orchestrator/orchestrator
+infra/gateway/dist/
