@@ -39,3 +39,6 @@ coverage/
 tmp/
 *.swp
 *.swo
+
+# work
+orchestrator/orchestrator
