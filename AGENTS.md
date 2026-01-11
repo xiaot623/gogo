@@ -66,13 +66,36 @@ curl -X POST http://localhost:8080/internal/invoke \
 ```
 orchestrator/           # Go: domain, store, api, agent client ✅
 ├── main.go
-├── domain/models.go
-├── store/sqlite.go
-├── api/handler.go
-├── agentclient/client.go
-├── config/config.go
+├── go.mod
+├── go.sum
 ├── README.md
-└── API.md
+├── agentclient/
+│   └── client.go       # HTTP + SSE streaming client
+├── api/
+│   ├── handler.go      # Route registration
+│   ├── agents.go       # Agent registration & invoke
+│   ├── messages.go     # Event & message handlers
+│   └── pkg.go          # Helper functions
+├── config/
+│   └── config.go       # Environment-based config
+├── domain/
+│   ├── agent.go        # Agent model
+│   ├── enums.go        # RunStatus, EventType enums
+│   ├── payload.go      # Event payload structs
+│   ├── request.go      # Request/response structs
+│   ├── run.go          # Run model
+│   ├── session.go      # Session/Message models
+│   └── sse.go          # SSE event data structs
+└── store/
+    ├── store.go        # Store interface
+    └── sqlite.go       # SQLite implementation
+
+docs/                   # Documentation
+├── TARGET.md
+├── ARCHITECTURE_MVP.md
+├── ARCHITECTURE_MVP_IMPROVEMENTS.md
+└── api/
+    └── Orchestrator.md # API documentation
 
 ingress/                # Go: ws, protocol, orchestrator client (TODO)
 
