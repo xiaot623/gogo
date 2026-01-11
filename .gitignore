@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.cover
+/go.work
+/go.work.sum
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Env
+.env
+.env.*
+
+# Databases
+*.db
+
+# Editor
+.idea/
+.vscode/
+
+# Misc
+coverage/
+tmp/
+*.swp
+*.swo
