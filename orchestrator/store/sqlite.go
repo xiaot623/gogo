@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogo/orchestrator/domain"
+	"github.com/xiaot623/gogo/orchestrator/domain"
 	_ "github.com/mattn/go-sqlite3"
 )
 

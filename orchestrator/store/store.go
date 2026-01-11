@@ -4,7 +4,7 @@ package store
 import (
 	"context"
 
-	"github.com/gogo/orchestrator/domain"
+	"github.com/xiaot623/gogo/orchestrator/domain"
 )
 
 // Store defines the interface for data persistence.

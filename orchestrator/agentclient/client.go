@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogo/orchestrator/domain"
+	"github.com/xiaot623/gogo/orchestrator/domain"
 )
 
 // SSEEvent represents a parsed SSE event.

@@ -1,4 +1,4 @@
-module github.com/gogo/orchestrator
+module github.com/xiaot623/gogo/orchestrator
 
 go 1.25.5
 

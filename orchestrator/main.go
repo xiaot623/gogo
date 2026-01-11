@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gogo/orchestrator/agentclient"
-	"github.com/gogo/orchestrator/api"
-	"github.com/gogo/orchestrator/config"
-	"github.com/gogo/orchestrator/store"
+	"github.com/xiaot623/gogo/orchestrator/agentclient"
+	"github.com/xiaot623/gogo/orchestrator/api"
+	"github.com/xiaot623/gogo/orchestrator/config"
+	"github.com/xiaot623/gogo/orchestrator/store"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
