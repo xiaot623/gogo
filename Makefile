@@ -7,6 +7,7 @@ start:
 # Stop docker containers
 stop:
 	docker-compose down
+	@docker rm -f gogo_litellm >/dev/null 2>&1 || true
 
 # Restart docker containers
 restart: stop start

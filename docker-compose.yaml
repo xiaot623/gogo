@@ -1,6 +1,21 @@
 name: gogo
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: gogo_postgres
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: gogo_litellm
@@ -11,4 +26,12 @@ services:
     command: [ "--config", "/app/config.yaml", "--port", "4000", "--detailed_debug" ]
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: always
+
+volumes:
+  postgres_data:
