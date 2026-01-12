@@ -19,10 +19,15 @@ type Config struct {
 	// Ingress settings
 	IngressURL string
 
+	// LLM Proxy settings (LiteLLM)
+	LiteLLMURL    string
+	LiteLLMAPIKey string
+
 	// Timeouts
 	AgentTimeout    time.Duration
 	ToolTimeout     time.Duration
 	ApprovalTimeout time.Duration
+	LLMTimeout      time.Duration
 
 	// Logging
 	LogLevel string
@@ -35,9 +40,12 @@ func Load() *Config {
 		InternalPort:    getEnvInt("INTERNAL_PORT", 8081),
 		DatabaseURL:     getEnv("DATABASE_URL", "file:orchestrator.db?cache=shared&mode=rwc"),
 		IngressURL:      getEnv("INGRESS_URL", "http://localhost:8090"),
+		LiteLLMURL:      getEnv("LITELLM_URL", "http://localhost:4000"),
+		LiteLLMAPIKey:   getEnv("LITELLM_API_KEY", ""),
 		AgentTimeout:    time.Duration(getEnvInt("AGENT_TIMEOUT_MS", 300000)) * time.Millisecond,
 		ToolTimeout:     time.Duration(getEnvInt("TOOL_TIMEOUT_MS", 60000)) * time.Millisecond,
 		ApprovalTimeout: time.Duration(getEnvInt("APPROVAL_TIMEOUT_MS", 600000)) * time.Millisecond,
+		LLMTimeout:      time.Duration(getEnvInt("LLM_TIMEOUT_MS", 120000)) * time.Millisecond,
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 	return cfg

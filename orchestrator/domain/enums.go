@@ -26,4 +26,7 @@ const (
 	EventTypeRunDone            EventType = "run_done"
 	EventTypeRunFailed          EventType = "run_failed"
 	EventTypeRunCancelled       EventType = "run_cancelled"
+	// LLM call events
+	EventTypeLLMCallStarted EventType = "llm_call_started"
+	EventTypeLLMCallDone    EventType = "llm_call_done"
 )

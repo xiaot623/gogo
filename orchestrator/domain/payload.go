@@ -29,3 +29,21 @@ type RunFailedPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
+// LLMCallStartedPayload is the payload for llm_call_started event.
+type LLMCallStartedPayload struct {
+	RequestID string `json:"request_id"`
+	Model     string `json:"model"`
+	Stream    bool   `json:"stream"`
+}
+
+// LLMCallDonePayload is the payload for llm_call_done event.
+type LLMCallDonePayload struct {
+	RequestID        string `json:"request_id"`
+	Model            string `json:"model"`
+	LatencyMs        int64  `json:"latency_ms"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	TotalTokens      int    `json:"total_tokens,omitempty"`
+	Error            string `json:"error,omitempty"`
+}

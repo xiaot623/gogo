@@ -10,12 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/xiaot623/gogo/orchestrator/agentclient"
 	"github.com/xiaot623/gogo/orchestrator/api"
 	"github.com/xiaot623/gogo/orchestrator/config"
+	"github.com/xiaot623/gogo/orchestrator/llmproxy"
 	"github.com/xiaot623/gogo/orchestrator/store"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 )
 
 func main() {
@@ -25,6 +26,7 @@ func main() {
 	log.Printf("Starting orchestrator...")
 	log.Printf("HTTP Port: %d", cfg.HTTPPort)
 	log.Printf("Database: %s", cfg.DatabaseURL)
+	log.Printf("LiteLLM URL: %s", cfg.LiteLLMURL)
 
 	// Initialize store
 	db, err := store.NewSQLiteStore(cfg.DatabaseURL)
@@ -39,6 +41,9 @@ func main() {
 	// Initialize handler
 	handler := api.NewHandler(db, agentClient, cfg)
 
+	// Initialize LLM proxy handler
+	llmHandler := llmproxy.NewHandler(cfg, db)
+
 	// Create Echo server
 	e := echo.New()
 	e.HideBanner = true
@@ -50,6 +55,7 @@ func main() {
 
 	// Register routes
 	handler.RegisterRoutes(e)
+	llmHandler.RegisterRoutes(e)
 
 	// Start server
 	go func() {

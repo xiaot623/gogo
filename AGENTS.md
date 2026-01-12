@@ -25,6 +25,48 @@
 - [x] **Push to Ingress**: call `POST /internal/send` to deliver events to client
 - [x] Agent registry: `POST /v1/agents/register`, `GET /v1/agents`
 
+### LLM Proxy (M2) ✅ DONE
+
+- [x] `POST /v1/chat/completions` - OpenAI-compatible chat completion (streaming & non-streaming)
+- [x] `GET /v1/models` - List available models
+- [x] Forward requests to LiteLLM proxy
+- [x] Events: `llm_call_started`, `llm_call_done` (with latency, token usage, errors)
+- [x] Trace correlation via `x-run-id` header
+
+**Location:** `orchestrator/llmproxy/`
+
+**Environment Variables:**
+```bash
+LITELLM_URL=http://localhost:4000    # LiteLLM proxy URL
+LITELLM_API_KEY=sk-xxx               # LiteLLM API key (optional)
+LLM_TIMEOUT_MS=120000                # Request timeout in milliseconds
+```
+
+**Test:**
+```bash
+# Non-streaming chat completion
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-run-id: run_123" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
+# Streaming chat completion
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-run-id: run_123" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": true
+  }'
+
+# List models
+curl http://localhost:8080/v1/models
+```
+
 **Location:** `orchestrator/`
 
 **Run:**
@@ -86,6 +128,9 @@ orchestrator/           # Go: domain, store, api, agent client ✅
 │   ├── run.go          # Run model
 │   ├── session.go      # Session/Message models
 │   └── sse.go          # SSE event data structs
+├── llmproxy/           # LLM Proxy (M2) ✅
+│   ├── client.go       # LiteLLM HTTP client
+│   └── handler.go      # OpenAI-compatible API handlers
 └── store/
     ├── store.go        # Store interface
     └── sqlite.go       # SQLite implementation
@@ -126,6 +171,8 @@ agent-demo/             # Python: FastAPI + SSE (TODO)
 | GET | `/v1/sessions/:session_id/messages` | Get messages |
 | POST | `/v1/agents/register` | Register agent |
 | GET | `/v1/agents` | List agents |
+| POST | `/v1/chat/completions` | LLM chat completion (OpenAI-compatible) |
+| GET | `/v1/models` | List available models |
 | GET | `/health` | Health check |
 
 ### Event Flow
