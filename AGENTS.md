@@ -7,7 +7,7 @@
 ## 1. Implementation Order
 
 1. **Orchestrator** - Data model, state machine, Agent invoke protocol, events table (source of truth) ✅
-2. **Agent (Demo)** - Validate orchestrator's SSE handling
+2. **Agent (Demo)** - Validate orchestrator's SSE handling ✅
 3. **Ingress** - WebSocket adapter (can bypass early via direct HTTP)
 
 ---
@@ -20,8 +20,9 @@
 
 - [x] `POST /internal/invoke` - create run, call agent, stream events
 - [x] `GET /v1/runs/{run_id}/events` - replay
-- [x] Tables: `sessions`, `runs`, `events`, `messages`, `agents`
+- [x] Tables: `sessions`, `runs`, `events`, `messages`, `agents`, `tool_calls`, `approvals`
 - [x] Events: `run_started`, `user_input`, `agent_invoke_started`, `agent_stream_delta`, `agent_invoke_done`, `run_done`, `run_failed`
+- [x] **Tool Policy (OPA)**: Integrated Rego policy engine for tool governance (allow, block, require_approval)
 - [x] **Push to Ingress**: call `POST /internal/send` to deliver events to client
 - [x] Agent registry: `POST /v1/agents/register`, `GET /v1/agents`
 
@@ -90,7 +91,7 @@ curl -X POST http://localhost:8080/internal/invoke \
   -d '{"session_id":"s1","agent_id":"demo","input_message":{"role":"user","content":"hello"}}'
 ```
 
-### Agent Demo (M0)
+### Agent Demo (M0) ✅ DONE
 
 - `POST /invoke` → SSE (`delta`, `done`)
 - Echo input with simulated streaming
@@ -131,6 +132,10 @@ orchestrator/           # Go: domain, store, api, agent client ✅
 ├── llmproxy/           # LLM Proxy (M2) ✅
 │   ├── client.go       # LiteLLM HTTP client
 │   └── handler.go      # OpenAI-compatible API handlers
+├── policy/             # OPA Policy Engine ✅
+│   └── engine.go       # Rego evaluation
+├── policies/           # Policy definitions
+│   └── tool_policy.rego
 └── store/
     ├── store.go        # Store interface
     └── sqlite.go       # SQLite implementation
@@ -143,8 +148,16 @@ docs/                   # Documentation
     └── Orchestrator.md # API documentation
 
 ingress/                # Go: ws, protocol, orchestrator client (TODO)
+                                        
+sdk/                    # Python SDK
+├── agent/              # Agent framework (FastAPI + SSE)
+└── toolbox/            # Common tools
 
-agent-demo/             # Python: FastAPI + SSE (TODO)
+agent-demo/             # Python: Demo Agent implementation ✅
+├── src/
+│   └── agent_demo/     # Agent logic
+├── pyproject.toml
+└── README.md
 ```
 
 ---
@@ -155,7 +168,7 @@ agent-demo/             # Python: FastAPI + SSE (TODO)
 | ------------ | ------ | ----------------- | ------ |
 | Orchestrator | Go     | echo              | ✅ Done |
 | Ingress      | Go     | gorilla/websocket | TODO   |
-| Agent Demo   | Python | FastAPI           | TODO   |
+| Agent Demo   | Python | FastAPI           | ✅ Done |
 | DB           | SQLite | -                 | ✅ Done |
 
 ---
@@ -174,6 +187,14 @@ agent-demo/             # Python: FastAPI + SSE (TODO)
 | POST | `/v1/chat/completions` | LLM chat completion (OpenAI-compatible) |
 | GET | `/v1/models` | List available models |
 | GET | `/health` | Health check |
+
+### Tool Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/tools/:tool_name/invoke` | Invoke tool (checks policy) |
+| GET | `/v1/tool_calls/:tool_call_id` | Get tool call status |
+| POST | `/v1/tool_calls/:tool_call_id/wait` | Wait for tool completion |
 
 ### Event Flow
 
@@ -207,6 +228,6 @@ Ingress                 Orchestrator              Agent
 
 ## 7. Next Steps
 
-1. **Agent Demo** - Python FastAPI service with SSE streaming
+1. **Agent Demo** - Done ✅
 2. **Ingress** - WebSocket server with connection registry
 3. **End-to-end test** - Client → Ingress → Orchestrator → Agent → back
