@@ -4,25 +4,28 @@ package api
 import (
 	"net/http"
 
+	"github.com/labstack/echo/v4"
 	"github.com/xiaot623/gogo/orchestrator/agentclient"
 	"github.com/xiaot623/gogo/orchestrator/config"
+	"github.com/xiaot623/gogo/orchestrator/policy"
 	"github.com/xiaot623/gogo/orchestrator/store"
-	"github.com/labstack/echo/v4"
 )
 
 // Handler handles HTTP requests.
 type Handler struct {
-	store       store.Store
-	agentClient *agentclient.Client
-	config      *config.Config
+	store        store.Store
+	agentClient  *agentclient.Client
+	config       *config.Config
+	policyEngine *policy.Engine
 }
 
 // NewHandler creates a new handler.
-func NewHandler(store store.Store, agentClient *agentclient.Client, config *config.Config) *Handler {
+func NewHandler(store store.Store, agentClient *agentclient.Client, config *config.Config, policyEngine *policy.Engine) *Handler {
 	return &Handler{
-		store:       store,
-		agentClient: agentClient,
-		config:      config,
+		store:        store,
+		agentClient:  agentClient,
+		config:       config,
+		policyEngine: policyEngine,
 	}
 }
 
@@ -39,6 +42,11 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/v1/agents/register", h.RegisterAgent)
 	e.GET("/v1/agents", h.ListAgents)
 	e.GET("/v1/agents/:agent_id", h.GetAgent)
+
+	// Tool API
+	e.POST("/v1/tools/:tool_name/invoke", h.InvokeTool) // Note: doc says /v1/tools/{tool_name}:invoke but echo uses /:param
+	e.GET("/v1/tool_calls/:tool_call_id", h.GetToolCall)
+	e.POST("/v1/tool_calls/:tool_call_id/wait", h.WaitToolCall) // Note: doc says :wait
 
 	e.GET("/health", h.Health)
 }

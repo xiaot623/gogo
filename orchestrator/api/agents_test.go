@@ -12,6 +12,7 @@ import (
 	"github.com/xiaot623/gogo/orchestrator/agentclient"
 	"github.com/xiaot623/gogo/orchestrator/config"
 	"github.com/xiaot623/gogo/orchestrator/domain"
+	"github.com/xiaot623/gogo/orchestrator/policy"
 	"github.com/xiaot623/gogo/orchestrator/tests/helpers"
 )
 
@@ -19,7 +20,12 @@ func newTestHandler(t *testing.T) *Handler {
 	cfg := &config.Config{IngressURL: "", AgentTimeout: time.Second}
 	store := helpers.NewTestSQLiteStore(t)
 	client := agentclient.NewClient()
-	return NewHandler(store, client, cfg)
+	ctx := context.Background()
+	policyEngine, err := policy.NewEngine(ctx, policy.DefaultPolicy)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+	return NewHandler(store, client, cfg, policyEngine)
 }
 
 func TestRegisterAgentValidation(t *testing.T) {

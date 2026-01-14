@@ -16,6 +16,7 @@ import (
 	"github.com/xiaot623/gogo/orchestrator/api"
 	"github.com/xiaot623/gogo/orchestrator/config"
 	"github.com/xiaot623/gogo/orchestrator/llmproxy"
+	"github.com/xiaot623/gogo/orchestrator/policy"
 	"github.com/xiaot623/gogo/orchestrator/store"
 )
 
@@ -38,8 +39,15 @@ func main() {
 	// Initialize agent client
 	agentClient := agentclient.NewClient()
 
+	// Initialize policy engine
+	ctx := context.Background()
+	policyEngine, err := policy.NewEngine(ctx, policy.DefaultPolicy)
+	if err != nil {
+		log.Fatalf("Failed to initialize policy engine: %v", err)
+	}
+
 	// Initialize handler
-	handler := api.NewHandler(db, agentClient, cfg)
+	handler := api.NewHandler(db, agentClient, cfg, policyEngine)
 
 	// Initialize LLM proxy handler
 	llmHandler := llmproxy.NewHandler(cfg, db)
@@ -75,10 +83,10 @@ func main() {
 	log.Println("Shutting down orchestrator...")
 
 	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := e.Shutdown(ctx); err != nil {
+	if err := e.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Failed to shutdown server gracefully: %v", err)
 	}
 

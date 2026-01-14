@@ -1,5 +1,7 @@
 package domain
 
+import "encoding/json"
+
 // InputMessage represents the input message from the client.
 type InputMessage struct {
 	Role    string `json:"role"`
@@ -30,4 +32,42 @@ type AgentInvokeRequest struct {
 	InputMessage InputMessage      `json:"input_message"`
 	Messages     []Message         `json:"messages,omitempty"`
 	Context      map[string]string `json:"context,omitempty"`
+}
+
+// ToolInvokeRequest represents the request to invoke a tool.
+type ToolInvokeRequest struct {
+	RunID          string          `json:"run_id"`
+	Args           json.RawMessage `json:"args"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	TimeoutMs      int             `json:"timeout_ms,omitempty"`
+}
+
+// ToolInvokeResponse represents the response from invoking a tool.
+type ToolInvokeResponse struct {
+	Status     string          `json:"status"` // succeeded, pending, failed
+	ToolCallID string          `json:"tool_call_id"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+	Error      *ToolError      `json:"error,omitempty"`
+}
+
+// ToolError represents a tool error.
+type ToolError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// ToolCallResponse represents the response for querying a tool call.
+type ToolCallResponse struct {
+	ToolCallID string          `json:"tool_call_id"`
+	Status     ToolCallStatus  `json:"status"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Timestamps Timestamps      `json:"timestamps"`
+}
+
+// Timestamps represents timestamps for a tool call.
+type Timestamps struct {
+	CreatedAt   int64 `json:"created_at"`
+	StartedAt   int64 `json:"started_at,omitempty"`
+	CompletedAt int64 `json:"completed_at,omitempty"`
 }

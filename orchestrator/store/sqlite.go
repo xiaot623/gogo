@@ -36,6 +36,12 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// Seed tools
+	if err := store.seedTools(); err != nil {
+		fmt.Printf("Failed to seed tools: %v\n", err)
+		// Don't fail startup for this
+	}
+
 	return store, nil
 }
 
@@ -89,6 +95,41 @@ func (s *SQLiteStore) migrate() error {
 			last_heartbeat DATETIME,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// New tables
+		`CREATE TABLE IF NOT EXISTS tools (
+			name TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			policy TEXT,
+			timeout_ms INTEGER NOT NULL DEFAULT 60000,
+			metadata TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS tool_calls (
+			tool_call_id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			tool_name TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			status TEXT NOT NULL,
+			args TEXT,
+			result TEXT,
+			error TEXT,
+			approval_id TEXT,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME,
+			FOREIGN KEY (run_id) REFERENCES runs(run_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id)`,
+		`CREATE TABLE IF NOT EXISTS approvals (
+			approval_id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			tool_call_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'PENDING',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			decided_at DATETIME,
+			decided_by TEXT,
+			reason TEXT,
+			FOREIGN KEY (run_id) REFERENCES runs(run_id),
+			FOREIGN KEY (tool_call_id) REFERENCES tool_calls(tool_call_id)
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -97,6 +138,42 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	return nil
+}
+
+func (s *SQLiteStore) seedTools() error {
+	ctx := context.Background()
+	tools := []domain.Tool{
+		{
+			Name:      "weather.query",
+			Kind:      domain.ToolKindServer,
+			TimeoutMs: 5000,
+		},
+		{
+			Name:      "browser.screenshot",
+			Kind:      domain.ToolKindClient,
+			TimeoutMs: 60000,
+		},
+		{
+			Name:      "payments.transfer",
+			Kind:      domain.ToolKindServer,
+			TimeoutMs: 10000,
+		},
+		{
+			Name:      "dangerous.command",
+			Kind:      domain.ToolKindServer,
+			TimeoutMs: 5000,
+		},
+	}
+
+	for _, t := range tools {
+		if err := s.CreateTool(ctx, &t); err != nil {
+			// Ignore if exists
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -378,4 +455,179 @@ func (s *SQLiteStore) ListAgents(ctx context.Context) ([]domain.Agent, error) {
 		agents = append(agents, agent)
 	}
 	return agents, rows.Err()
+}
+
+// CreateTool creates a new tool.
+func (s *SQLiteStore) CreateTool(ctx context.Context, tool *domain.Tool) error {
+	policy, _ := json.Marshal(tool.Policy)
+	metadata, _ := json.Marshal(tool.Metadata)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tools (name, kind, policy, timeout_ms, metadata) VALUES (?, ?, ?, ?, ?)`,
+		tool.Name, tool.Kind, string(policy), tool.TimeoutMs, string(metadata))
+	return err
+}
+
+// GetTool retrieves a tool by name.
+func (s *SQLiteStore) GetTool(ctx context.Context, toolName string) (*domain.Tool, error) {
+	var tool domain.Tool
+	var policy, metadata sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, kind, policy, timeout_ms, metadata FROM tools WHERE name = ?`,
+		toolName).Scan(&tool.Name, &tool.Kind, &policy, &tool.TimeoutMs, &metadata)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if policy.Valid {
+		tool.Policy = json.RawMessage(policy.String)
+	}
+	if metadata.Valid {
+		tool.Metadata = json.RawMessage(metadata.String)
+	}
+	return &tool, nil
+}
+
+// ListTools lists all tools.
+func (s *SQLiteStore) ListTools(ctx context.Context) ([]domain.Tool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, kind, policy, timeout_ms, metadata FROM tools`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tools []domain.Tool
+	for rows.Next() {
+		var tool domain.Tool
+		var policy, metadata sql.NullString
+		if err := rows.Scan(&tool.Name, &tool.Kind, &policy, &tool.TimeoutMs, &metadata); err != nil {
+			return nil, err
+		}
+		if policy.Valid {
+			tool.Policy = json.RawMessage(policy.String)
+		}
+		if metadata.Valid {
+			tool.Metadata = json.RawMessage(metadata.String)
+		}
+		tools = append(tools, tool)
+	}
+	return tools, rows.Err()
+}
+
+// CreateToolCall creates a new tool call.
+func (s *SQLiteStore) CreateToolCall(ctx context.Context, toolCall *domain.ToolCall) error {
+	args, _ := json.Marshal(toolCall.Args)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tool_calls (tool_call_id, run_id, tool_name, kind, status, args, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		toolCall.ToolCallID, toolCall.RunID, toolCall.ToolName, toolCall.Kind, toolCall.Status, string(args), toolCall.CreatedAt)
+	return err
+}
+
+// GetToolCall retrieves a tool call by ID.
+func (s *SQLiteStore) GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error) {
+	var tc domain.ToolCall
+	var args, result, errData, approvalID sql.NullString
+	var completedAt sql.NullTime
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, created_at, completed_at FROM tool_calls WHERE tool_call_id = ?`,
+		toolCallID).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &tc.CreatedAt, &completedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if args.Valid {
+		tc.Args = json.RawMessage(args.String)
+	}
+	if result.Valid {
+		tc.Result = json.RawMessage(result.String)
+	}
+	if errData.Valid {
+		tc.Error = json.RawMessage(errData.String)
+	}
+	if approvalID.Valid {
+		tc.ApprovalID = approvalID.String
+	}
+	if completedAt.Valid {
+		tc.CompletedAt = &completedAt.Time
+	}
+	return &tc, nil
+}
+
+// UpdateToolCallStatus updates the status of a tool call.
+func (s *SQLiteStore) UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET status = ? WHERE tool_call_id = ?`,
+		status, toolCallID)
+	return err
+}
+
+// UpdateToolCallResult updates the result of a tool call.
+func (s *SQLiteStore) UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) error {
+	now := time.Now()
+	var resStr, errStr sql.NullString
+	if result != nil {
+		resStr = sql.NullString{String: string(result), Valid: true}
+	}
+	if errData != nil {
+		errStr = sql.NullString{String: string(errData), Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET status = ?, result = ?, error = ?, completed_at = ? WHERE tool_call_id = ?`,
+		status, resStr, errStr, now, toolCallID)
+	return err
+}
+
+// UpdateToolCallApproval updates the approval ID and status of a tool call.
+func (s *SQLiteStore) UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET approval_id = ?, status = ? WHERE tool_call_id = ?`,
+		approvalID, status, toolCallID)
+	return err
+}
+
+// CreateApproval creates a new approval.
+func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *domain.Approval) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO approvals (approval_id, run_id, tool_call_id, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+		approval.ApprovalID, approval.RunID, approval.ToolCallID, approval.Status, approval.CreatedAt)
+	return err
+}
+
+// GetApproval retrieves an approval by ID.
+func (s *SQLiteStore) GetApproval(ctx context.Context, approvalID string) (*domain.Approval, error) {
+	var ap domain.Approval
+	var decidedAt sql.NullTime
+	var decidedBy, reason sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT approval_id, run_id, tool_call_id, status, created_at, decided_at, decided_by, reason FROM approvals WHERE approval_id = ?`,
+		approvalID).Scan(&ap.ApprovalID, &ap.RunID, &ap.ToolCallID, &ap.Status, &ap.CreatedAt, &decidedAt, &decidedBy, &reason)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if decidedAt.Valid {
+		ap.DecidedAt = &decidedAt.Time
+	}
+	if decidedBy.Valid {
+		ap.DecidedBy = decidedBy.String
+	}
+	if reason.Valid {
+		ap.Reason = reason.String
+	}
+	return &ap, nil
+}
+
+// UpdateApprovalStatus updates the status of an approval.
+func (s *SQLiteStore) UpdateApprovalStatus(ctx context.Context, approvalID string, status domain.ApprovalStatus, decidedBy string, reason string) error {
+	now := time.Now()
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, reason = ? WHERE approval_id = ?`,
+		status, now, decidedBy, reason, approvalID)
+	return err
 }

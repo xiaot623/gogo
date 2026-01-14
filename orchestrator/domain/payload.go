@@ -1,5 +1,7 @@
 package domain
 
+import "encoding/json"
+
 // RunStartedPayload is the payload for run_started event.
 type RunStartedPayload struct {
 	RequestID string `json:"request_id,omitempty"`
@@ -46,4 +48,56 @@ type LLMCallDonePayload struct {
 	CompletionTokens int    `json:"completion_tokens,omitempty"`
 	TotalTokens      int    `json:"total_tokens,omitempty"`
 	Error            string `json:"error,omitempty"`
+}
+
+// ToolCallCreatedPayload is the payload for tool_call_created event.
+type ToolCallCreatedPayload struct {
+	ToolCallID string          `json:"tool_call_id"`
+	ToolName   string          `json:"tool_name"`
+	Kind       ToolKind        `json:"kind"`
+	Args       json.RawMessage `json:"args"`
+}
+
+// PolicyDecisionPayload is the payload for policy_decision event.
+type PolicyDecisionPayload struct {
+	ToolCallID string `json:"tool_call_id"`
+	Decision   string `json:"decision"` // allow, require_approval, block
+	Reason     string `json:"reason,omitempty"`
+}
+
+// ToolDispatchedPayload is the payload for tool_dispatched event.
+type ToolDispatchedPayload struct {
+	ToolCallID string `json:"tool_call_id"`
+}
+
+// ToolResultPayload is the payload for tool_result event.
+type ToolResultPayload struct {
+	ToolCallID string          `json:"tool_call_id"`
+	Status     ToolCallStatus  `json:"status"`
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
+// ToolRequestPayload is the payload for tool_request event (client tool).
+type ToolRequestPayload struct {
+	ToolCallID string          `json:"tool_call_id"`
+	ToolName   string          `json:"tool_name"`
+	Args       json.RawMessage `json:"args"`
+	DeadlineTs int64           `json:"deadline_ts"`
+}
+
+// ApprovalRequiredPayload is the payload for approval_required event.
+type ApprovalRequiredPayload struct {
+	ApprovalID  string          `json:"approval_id"`
+	ToolCallID  string          `json:"tool_call_id"`
+	ToolName    string          `json:"tool_name"`
+	ArgsSummary string          `json:"args_summary"`
+	Args        json.RawMessage `json:"args,omitempty"`
+}
+
+// ApprovalDecisionPayload is the payload for approval_decision event.
+type ApprovalDecisionPayload struct {
+	ApprovalID string         `json:"approval_id"`
+	Decision   ApprovalStatus `json:"decision"`
+	Reason     string         `json:"reason,omitempty"`
 }
