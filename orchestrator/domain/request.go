@@ -88,3 +88,19 @@ type ApprovalDecisionResponse struct {
 	Result         json.RawMessage `json:"result,omitempty"`
 	Error          json.RawMessage `json:"error,omitempty"`
 }
+
+// ToolCallResultRequest represents a request to submit a tool call result.
+type ToolCallResultRequest struct {
+	Status string          `json:"status"` // SUCCEEDED or FAILED
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+}
+
+// ToolCallResultResponse represents the response after submitting a tool call result.
+type ToolCallResultResponse struct {
+	ToolCallID  string          `json:"tool_call_id"`
+	Status      ToolCallStatus  `json:"status"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Error       json.RawMessage `json:"error,omitempty"`
+	CompletedAt int64           `json:"completed_at"`
+}

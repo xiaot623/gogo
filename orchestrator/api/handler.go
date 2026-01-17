@@ -47,6 +47,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/v1/tools/:tool_name/invoke", h.InvokeTool) // Note: doc says /v1/tools/{tool_name}:invoke but echo uses /:param
 	e.GET("/v1/tool_calls/:tool_call_id", h.GetToolCall)
 	e.POST("/v1/tool_calls/:tool_call_id/wait", h.WaitToolCall) // Note: doc says :wait
+	e.POST("/v1/tool_calls/:tool_call_id/result", h.SubmitToolResult)
 	e.POST("/v1/approvals/:approval_id/decide", h.DecideApproval)
 
 	e.GET("/health", h.Health)
