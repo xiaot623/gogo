@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaot623/gogo/orchestrator/internal/domain"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/xiaot623/gogo/orchestrator/internal/domain"
 )
 
 // SQLiteStore implements Store using SQLite.
@@ -22,6 +22,12 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	// For in-memory SQLite, multiple connections create separate databases.
+	// Keep a single connection to avoid schema/data disappearing across goroutines.
+	if dsn == ":memory:" || strings.Contains(dsn, "mode=memory") {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 
 	// Enable foreign keys
@@ -116,11 +122,13 @@ func (s *SQLiteStore) migrate() error {
 			result TEXT,
 			error TEXT,
 			approval_id TEXT,
+			timeout_ms INTEGER NOT NULL DEFAULT 60000,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME,
 			FOREIGN KEY (run_id) REFERENCES runs(run_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_calls_status_created ON tool_calls(status, created_at)`,
 		`CREATE TABLE IF NOT EXISTS approvals (
 			approval_id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -141,7 +149,40 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Add new columns for existing DBs (SQLite has limited ALTER TABLE support).
+	if err := s.ensureColumn("tool_calls", "timeout_ms", "ALTER TABLE tool_calls ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 60000"); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (s *SQLiteStore) ensureColumn(tableName, columnName, ddl string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(ddl)
+	return err
 }
 
 func (s *SQLiteStore) seedTools() error {
@@ -546,8 +587,8 @@ func (s *SQLiteStore) ListTools(ctx context.Context) ([]domain.Tool, error) {
 func (s *SQLiteStore) CreateToolCall(ctx context.Context, toolCall *domain.ToolCall) error {
 	args, _ := json.Marshal(toolCall.Args)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tool_calls (tool_call_id, run_id, tool_name, kind, status, args, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		toolCall.ToolCallID, toolCall.RunID, toolCall.ToolName, toolCall.Kind, toolCall.Status, string(args), toolCall.CreatedAt)
+		`INSERT INTO tool_calls (tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, timeout_ms, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		toolCall.ToolCallID, toolCall.RunID, toolCall.ToolName, toolCall.Kind, toolCall.Status, string(args), nullStringBytes(toolCall.Result), nullStringBytes(toolCall.Error), nullString(toolCall.ApprovalID), toolCall.TimeoutMs, toolCall.CreatedAt, toolCall.CompletedAt)
 	return err
 }
 
@@ -558,8 +599,8 @@ func (s *SQLiteStore) GetToolCall(ctx context.Context, toolCallID string) (*doma
 	var completedAt sql.NullTime
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, created_at, completed_at FROM tool_calls WHERE tool_call_id = ?`,
-		toolCallID).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &tc.CreatedAt, &completedAt)
+		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, timeout_ms, created_at, completed_at FROM tool_calls WHERE tool_call_id = ?`,
+		toolCallID).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &tc.TimeoutMs, &tc.CreatedAt, &completedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -585,15 +626,22 @@ func (s *SQLiteStore) GetToolCall(ctx context.Context, toolCallID string) (*doma
 }
 
 // UpdateToolCallStatus updates the status of a tool call.
-func (s *SQLiteStore) UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE tool_calls SET status = ? WHERE tool_call_id = ?`,
+func (s *SQLiteStore) UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET status = ? WHERE tool_call_id = ? AND completed_at IS NULL`,
 		status, toolCallID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 // UpdateToolCallResult updates the result of a tool call.
-func (s *SQLiteStore) UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) error {
+func (s *SQLiteStore) UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) (bool, error) {
 	now := time.Now()
 	var resStr, errStr sql.NullString
 	if result != nil {
@@ -602,18 +650,69 @@ func (s *SQLiteStore) UpdateToolCallResult(ctx context.Context, toolCallID strin
 	if errData != nil {
 		errStr = sql.NullString{String: string(errData), Valid: true}
 	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE tool_calls SET status = ?, result = ?, error = ?, completed_at = ? WHERE tool_call_id = ?`,
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET status = ?, result = ?, error = ?, completed_at = ? WHERE tool_call_id = ? AND completed_at IS NULL`,
 		status, resStr, errStr, now, toolCallID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 // UpdateToolCallApproval updates the approval ID and status of a tool call.
-func (s *SQLiteStore) UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE tool_calls SET approval_id = ?, status = ? WHERE tool_call_id = ?`,
+func (s *SQLiteStore) UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE tool_calls SET approval_id = ?, status = ? WHERE tool_call_id = ? AND completed_at IS NULL`,
 		approvalID, status, toolCallID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *SQLiteStore) ListExpiredToolCalls(ctx context.Context, limit int) ([]domain.ToolCall, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tool_call_id, run_id, tool_name, kind, status, args, approval_id, timeout_ms, created_at
+		FROM tool_calls
+		WHERE completed_at IS NULL
+		  AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMEOUT', 'BLOCKED', 'REJECTED')
+		  AND ((julianday('now') - julianday(created_at)) * 86400000.0) >= timeout_ms
+		ORDER BY created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.ToolCall
+	for rows.Next() {
+		var tc domain.ToolCall
+		var args sql.NullString
+		var approvalID sql.NullString
+		if err := rows.Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &approvalID, &tc.TimeoutMs, &tc.CreatedAt); err != nil {
+			return nil, err
+		}
+		if args.Valid {
+			tc.Args = json.RawMessage(args.String)
+		}
+		if approvalID.Valid {
+			tc.ApprovalID = approvalID.String
+		}
+		out = append(out, tc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // CreateApproval creates a new approval.
@@ -657,4 +756,33 @@ func (s *SQLiteStore) UpdateApprovalStatus(ctx context.Context, approvalID strin
 		`UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, reason = ? WHERE approval_id = ?`,
 		status, now, decidedBy, reason, approvalID)
 	return err
+}
+
+func (s *SQLiteStore) ExpireApprovalIfPending(ctx context.Context, approvalID string, reason string) (bool, error) {
+	now := time.Now()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE approvals SET status = ?, decided_at = ?, reason = ? WHERE approval_id = ? AND status = ?`,
+		domain.ApprovalStatusExpired, now, reason, approvalID, domain.ApprovalStatusPending)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func nullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+func nullStringBytes(b []byte) sql.NullString {
+	if len(b) == 0 {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(b), Valid: true}
 }

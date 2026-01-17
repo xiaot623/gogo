@@ -42,14 +42,16 @@ type Store interface {
 	// ToolCall operations
 	CreateToolCall(ctx context.Context, toolCall *domain.ToolCall) error
 	GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error)
-	UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) error
-	UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) error
-	UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) error
+	UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) (bool, error)
+	UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) (bool, error)
+	UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) (bool, error)
+	ListExpiredToolCalls(ctx context.Context, limit int) ([]domain.ToolCall, error)
 
 	// Approval operations
 	CreateApproval(ctx context.Context, approval *domain.Approval) error
 	GetApproval(ctx context.Context, approvalID string) (*domain.Approval, error)
 	UpdateApprovalStatus(ctx context.Context, approvalID string, status domain.ApprovalStatus, decidedBy string, reason string) error
+	ExpireApprovalIfPending(ctx context.Context, approvalID string, reason string) (bool, error)
 
 	// Lifecycle
 	Close() error

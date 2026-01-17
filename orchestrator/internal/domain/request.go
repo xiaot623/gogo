@@ -62,6 +62,7 @@ type ToolCallResponse struct {
 	ToolCallID string          `json:"tool_call_id"`
 	Status     ToolCallStatus  `json:"status"`
 	Result     json.RawMessage `json:"result,omitempty"`
+	Error      json.RawMessage `json:"error,omitempty"`
 	Timestamps Timestamps      `json:"timestamps"`
 }
 

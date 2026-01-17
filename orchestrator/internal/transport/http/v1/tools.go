@@ -39,12 +39,12 @@ func (h *Handler) InvokeTool(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	
+
 	resp, err := h.service.InvokeTool(ctx, toolName, req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	
+
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -65,6 +65,7 @@ func (h *Handler) GetToolCall(c echo.Context) error {
 		ToolCallID: tc.ToolCallID,
 		Status:     tc.Status,
 		Result:     tc.Result,
+		Error:      tc.Error,
 		Timestamps: domain.Timestamps{
 			CreatedAt: tc.CreatedAt.UnixMilli(),
 		},
@@ -80,7 +81,7 @@ func (h *Handler) GetToolCall(c echo.Context) error {
 func (h *Handler) WaitToolCall(c echo.Context) error {
 	toolCallID := c.Param("tool_call_id")
 	timeoutMs := 60000 // default 60s
-	
+
 	// Parse timeout (if query param) - simpler for MVP
 	if t := c.QueryParam("timeout_ms"); t != "" {
 		if val, err := strconv.Atoi(t); err == nil {
@@ -89,7 +90,7 @@ func (h *Handler) WaitToolCall(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	
+
 	tc, err := h.service.WaitToolCall(ctx, toolCallID, timeoutMs)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -97,11 +98,12 @@ func (h *Handler) WaitToolCall(c echo.Context) error {
 	if tc == nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "tool call not found"})
 	}
-	
+
 	resp := domain.ToolCallResponse{
 		ToolCallID: tc.ToolCallID,
 		Status:     tc.Status,
 		Result:     tc.Result,
+		Error:      tc.Error,
 		Timestamps: domain.Timestamps{
 			CreatedAt: tc.CreatedAt.UnixMilli(),
 		},

@@ -55,6 +55,16 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 
 	toolCallID := "tc_" + uuid.New().String()
 	now := time.Now()
+	timeoutMs := tool.TimeoutMs
+	if req.TimeoutMs > 0 {
+		timeoutMs = req.TimeoutMs
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = int(s.config.ToolTimeout.Milliseconds())
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 60000
+	}
 
 	// Create ToolCall
 	toolCall := &domain.ToolCall{
@@ -64,23 +74,25 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 		Kind:       tool.Kind,
 		Status:     domain.ToolCallStatusCreated,
 		Args:       req.Args,
+		TimeoutMs:  timeoutMs,
 		CreatedAt:  now,
 	}
 
 	// Handle Decision
 	if decision == "block" {
 		toolCall.Status = domain.ToolCallStatusBlocked
-		toolCall.Error = json.RawMessage(fmt.Sprintf(`{"code":"blocked","message":"%s"}`, reason))
+		errData, _ := json.Marshal(map[string]string{"code": "blocked", "message": reason})
+		toolCall.Error = errData
 		completedAt := now
 		toolCall.CompletedAt = &completedAt
-		s.store.CreateToolCall(ctx, toolCall)
+		_ = s.store.CreateToolCall(ctx, toolCall)
 
 		// Record policy decision event
-		payload, _ := json.Marshal(domain.PolicyDecisionPayload{
+		payload := domain.PolicyDecisionPayload{
 			ToolCallID: toolCallID,
 			Decision:   "block",
 			Reason:     reason,
-		})
+		}
 		s.recordEvent(ctx, req.RunID, domain.EventTypePolicyDecision, payload)
 
 		return &domain.ToolInvokeResponse{
@@ -92,7 +104,7 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 
 	if decision == "require_approval" {
 		toolCall.Status = domain.ToolCallStatusWaitingApproval
-		s.store.CreateToolCall(ctx, toolCall)
+		_ = s.store.CreateToolCall(ctx, toolCall)
 
 		approvalID := "ap_" + uuid.New().String()
 		approval := &domain.Approval{
@@ -103,30 +115,30 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 			CreatedAt:  now,
 		}
 		s.store.CreateApproval(ctx, approval)
-		s.store.UpdateToolCallApproval(ctx, toolCallID, approvalID, domain.ToolCallStatusWaitingApproval)
+		_, _ = s.store.UpdateToolCallApproval(ctx, toolCallID, approvalID, domain.ToolCallStatusWaitingApproval)
 
 		// Emit approval_required event
-		payload, _ := json.Marshal(domain.ApprovalRequiredPayload{
+		payload := domain.ApprovalRequiredPayload{
 			ApprovalID:  approvalID,
 			ToolCallID:  toolCallID,
 			ToolName:    toolName,
 			ArgsSummary: "Approval required for " + toolName, // Simplification
 			Args:        req.Args,
-		})
+		}
 		s.recordEvent(ctx, req.RunID, domain.EventTypeApprovalRequired, payload)
-		
+
 		// Push to ingress
 		// We need to push the approval request to the client
 		if s.ingressClient != nil {
 			var argsObj interface{}
 			json.Unmarshal(req.Args, &argsObj)
 			s.ingressClient.PushEvent(session.SessionID, map[string]interface{}{
-				"type": "approval_required",
-				"ts": now.UnixMilli(),
-				"run_id": req.RunID,
-				"approval_id": approvalID,
+				"type":         "approval_required",
+				"ts":           now.UnixMilli(),
+				"run_id":       req.RunID,
+				"approval_id":  approvalID,
 				"tool_call_id": toolCallID,
-				"tool_name": toolName,
+				"tool_name":    toolName,
 				"args_summary": "Approval required for " + toolName,
 			})
 		}
@@ -143,31 +155,31 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 	if tool.Kind == domain.ToolKindServer {
 		toolCall.Status = domain.ToolCallStatusRunning
 	}
-	s.store.CreateToolCall(ctx, toolCall)
+	_ = s.store.CreateToolCall(ctx, toolCall)
 
 	// Execute Logic
 	if tool.Kind == domain.ToolKindClient {
 		// Emit tool_request event
-		payload, _ := json.Marshal(domain.ToolRequestPayload{
+		payload := domain.ToolRequestPayload{
 			ToolCallID: toolCallID,
 			ToolName:   toolName,
 			Args:       req.Args,
-			DeadlineTs: now.Add(time.Duration(tool.TimeoutMs) * time.Millisecond).UnixMilli(),
-		})
+			DeadlineTs: now.Add(time.Duration(timeoutMs) * time.Millisecond).UnixMilli(),
+		}
 		s.recordEvent(ctx, req.RunID, domain.EventTypeToolRequest, payload)
-		
+
 		// Push to ingress
 		if s.ingressClient != nil {
 			var argsObj interface{}
 			json.Unmarshal(req.Args, &argsObj)
 			s.ingressClient.PushEvent(session.SessionID, map[string]interface{}{
-				"type": "tool_request",
-				"ts": now.UnixMilli(),
-				"run_id": req.RunID,
+				"type":         "tool_request",
+				"ts":           now.UnixMilli(),
+				"run_id":       req.RunID,
 				"tool_call_id": toolCallID,
-				"tool_name": toolName,
-				"args": argsObj,
-				"deadline_ts": now.Add(time.Duration(tool.TimeoutMs) * time.Millisecond).UnixMilli(),
+				"tool_name":    toolName,
+				"args":         argsObj,
+				"deadline_ts":  now.Add(time.Duration(timeoutMs) * time.Millisecond).UnixMilli(),
 			})
 		}
 
@@ -190,39 +202,85 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 
 // executeServerToolAsync executes a server tool asynchronously.
 func (s *Service) executeServerToolAsync(toolCall *domain.ToolCall, tool *domain.Tool) {
-	ctx := context.Background()
+	timeoutMs := toolCall.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = tool.TimeoutMs
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = int(s.config.ToolTimeout.Milliseconds())
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 60000
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
 
 	// Update status to RUNNING
-	s.store.UpdateToolCallStatus(ctx, toolCall.ToolCallID, domain.ToolCallStatusRunning)
+	_, _ = s.store.UpdateToolCallStatus(ctx, toolCall.ToolCallID, domain.ToolCallStatusRunning)
 
 	// Execute tool logic (mock implementation)
-	result, err := s.executeServerTool(ctx, tool.Name, toolCall.Args)
+	type execResult struct {
+		result json.RawMessage
+		err    error
+	}
+	resultCh := make(chan execResult, 1)
+	go func() {
+		res, err := s.executeServerTool(ctx, tool.Name, toolCall.Args)
+		resultCh <- execResult{result: res, err: err}
+	}()
 
-	// Update result
-	if err != nil {
-		errData, _ := json.Marshal(map[string]string{
-			"code":    "execution_error",
-			"message": err.Error(),
+	select {
+	case <-ctx.Done():
+		errData, _ := json.Marshal(map[string]interface{}{
+			"code":       "timeout",
+			"message":    "tool execution timeout",
+			"timeout_ms": timeoutMs,
 		})
-		s.store.UpdateToolCallResult(ctx, toolCall.ToolCallID, domain.ToolCallStatusFailed, nil, errData)
+		updated, err := s.store.UpdateToolCallResult(context.Background(), toolCall.ToolCallID, domain.ToolCallStatusTimeout, nil, errData)
+		if err == nil && updated {
+			payload := domain.ToolResultPayload{
+				ToolCallID: toolCall.ToolCallID,
+				Status:     domain.ToolCallStatusTimeout,
+				Error:      errData,
+			}
+			s.recordEvent(context.Background(), toolCall.RunID, domain.EventTypeToolResult, payload)
+		}
+		return
+	case out := <-resultCh:
+		result, err := out.result, out.err
+		// Update result
+		if err != nil {
+			errData, _ := json.Marshal(map[string]string{
+				"code":    "execution_error",
+				"message": err.Error(),
+			})
+			updated, updErr := s.store.UpdateToolCallResult(context.Background(), toolCall.ToolCallID, domain.ToolCallStatusFailed, nil, errData)
+			if updErr != nil || !updated {
+				return
+			}
 
-		// Emit result event
-		payload, _ := json.Marshal(domain.ToolResultPayload{
-			ToolCallID: toolCall.ToolCallID,
-			Status:     domain.ToolCallStatusFailed,
-			Error:      errData,
-		})
-		s.recordEvent(ctx, toolCall.RunID, domain.EventTypeToolResult, payload)
-	} else {
-		s.store.UpdateToolCallResult(ctx, toolCall.ToolCallID, domain.ToolCallStatusSucceeded, result, nil)
+			// Emit result event
+			payload := domain.ToolResultPayload{
+				ToolCallID: toolCall.ToolCallID,
+				Status:     domain.ToolCallStatusFailed,
+				Error:      errData,
+			}
+			s.recordEvent(context.Background(), toolCall.RunID, domain.EventTypeToolResult, payload)
+		} else {
+			updated, updErr := s.store.UpdateToolCallResult(context.Background(), toolCall.ToolCallID, domain.ToolCallStatusSucceeded, result, nil)
+			if updErr != nil || !updated {
+				return
+			}
 
-		// Emit result event
-		payload, _ := json.Marshal(domain.ToolResultPayload{
-			ToolCallID: toolCall.ToolCallID,
-			Status:     domain.ToolCallStatusSucceeded,
-			Result:     result,
-		})
-		s.recordEvent(ctx, toolCall.RunID, domain.EventTypeToolResult, payload)
+			// Emit result event
+			payload := domain.ToolResultPayload{
+				ToolCallID: toolCall.ToolCallID,
+				Status:     domain.ToolCallStatusSucceeded,
+				Result:     result,
+			}
+			s.recordEvent(context.Background(), toolCall.RunID, domain.EventTypeToolResult, payload)
+		}
 	}
 }
 
@@ -324,18 +382,39 @@ func (s *Service) SubmitToolResult(ctx context.Context, toolCallID string, req d
 	}
 
 	// Update tool call result
-	if err := s.store.UpdateToolCallResult(ctx, toolCallID, newStatus, req.Result, req.Error); err != nil {
+	updated, err := s.store.UpdateToolCallResult(ctx, toolCallID, newStatus, req.Result, req.Error)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update tool call: %w", err)
+	}
+	if !updated {
+		tc, err := s.store.GetToolCall(ctx, toolCallID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get tool call: %w", err)
+		}
+		if tc == nil {
+			return nil, fmt.Errorf("tool call not found")
+		}
+		var completedAt int64
+		if tc.CompletedAt != nil {
+			completedAt = tc.CompletedAt.UnixMilli()
+		}
+		return &domain.ToolCallResultResponse{
+			ToolCallID:  tc.ToolCallID,
+			Status:      tc.Status,
+			Result:      tc.Result,
+			Error:       tc.Error,
+			CompletedAt: completedAt,
+		}, nil
 	}
 
 	// Record event
 	now := time.Now()
-	payload, _ := json.Marshal(domain.ToolResultPayload{
+	payload := domain.ToolResultPayload{
 		ToolCallID: toolCallID,
 		Status:     newStatus,
 		Result:     req.Result,
 		Error:      req.Error,
-	})
+	}
 	s.recordEvent(ctx, tc.RunID, domain.EventTypeToolResult, payload)
 
 	return &domain.ToolCallResultResponse{

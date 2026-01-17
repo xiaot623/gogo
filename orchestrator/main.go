@@ -56,6 +56,11 @@ func main() {
 	// Initialize service
 	svc := service.New(db, agentClient, ingressClient, llmClient, cfg, policyEngine)
 
+	// Start background monitors (best-effort)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	go svc.RunToolCallTimeoutMonitor(bgCtx)
+
 	// Create servers
 	externalServer := transport.NewExternalServer(svc)
 	internalServer := transport.NewInternalServer(svc)
@@ -85,6 +90,7 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down orchestrator...")
+	bgCancel()
 
 	// Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -22,6 +22,17 @@ func (s *Service) UpdateApproval(ctx context.Context, approvalID string, req dom
 		return fmt.Errorf("approval is not pending")
 	}
 
+	tc, err := s.store.GetToolCall(ctx, approval.ToolCallID)
+	if err != nil {
+		return fmt.Errorf("failed to get tool call: %w", err)
+	}
+	if tc == nil {
+		return fmt.Errorf("tool call not found")
+	}
+	if isTerminalStatus(tc.Status) {
+		return fmt.Errorf("tool call already completed")
+	}
+
 	// Update approval status
 	newStatus := domain.ApprovalStatusApproved
 	if req.Decision == "reject" {
@@ -32,107 +43,74 @@ func (s *Service) UpdateApproval(ctx context.Context, approvalID string, req dom
 		return fmt.Errorf("failed to update approval status: %w", err)
 	}
 
-	// Update ToolCall status
-	toolCallStatus := domain.ToolCallStatusRunning
-	if newStatus == domain.ApprovalStatusRejected {
-		toolCallStatus = domain.ToolCallStatusRejected
-	}
-
-	if err := s.store.UpdateToolCallApproval(ctx, approval.ToolCallID, approvalID, toolCallStatus); err != nil {
-		return fmt.Errorf("failed to update tool call status: %w", err)
-	}
-
 	// Record event
-	payload, _ := json.Marshal(domain.ApprovalDecisionPayload{
+	decisionPayload := domain.ApprovalDecisionPayload{
 		ApprovalID: approvalID,
 		Decision:   newStatus,
 		Reason:     req.Reason,
-	})
-	s.recordEvent(ctx, approval.RunID, domain.EventTypeApprovalDecision, payload)
+	}
+	s.recordEvent(ctx, approval.RunID, domain.EventTypeApprovalDecision, decisionPayload)
 
-	// If approved, we need to continue execution
-	if newStatus == domain.ApprovalStatusApproved {
-		// In MVP, we just mark it as Running (if server tool) or Dispatched (if needed).
-		// But if it's a server tool, we should execute it now?
-		// Architecture doc says: "审批通过后平台自动继续执行该 tool 节点"
-		// If it's a server tool, we need to execute it.
-		// We need to fetch the tool call to know if it's server or client.
-		
-		tc, err := s.store.GetToolCall(ctx, approval.ToolCallID)
+	// Rejected: finalize tool call.
+	if newStatus == domain.ApprovalStatusRejected {
+		errData := json.RawMessage(`{"code":"rejected","message":"approval rejected"}`)
+		updated, err := s.store.UpdateToolCallResult(ctx, approval.ToolCallID, domain.ToolCallStatusRejected, nil, errData)
 		if err != nil {
-			return fmt.Errorf("failed to get tool call: %w", err)
+			return fmt.Errorf("failed to update tool call: %w", err)
 		}
-
-		if tc.Kind == domain.ToolKindServer {
-			// Execute Logic (Synchronous Mock)
-			// This is duplicated logic from InvokeTool. Ideally refactor into `executeServerTool`.
-			result := `{"status":"executed"}`
-			if tc.ToolName == "weather.query" {
-				result = `{"weather":"Sunny","temperature":25}`
+		if updated {
+			payload := domain.ToolResultPayload{
+				ToolCallID: approval.ToolCallID,
+				Status:     domain.ToolCallStatusRejected,
+				Error:      errData,
 			}
-			s.store.UpdateToolCallResult(ctx, tc.ToolCallID, domain.ToolCallStatusSucceeded, []byte(result), nil)
-
-			// Emit result event
-			payload, _ := json.Marshal(domain.ToolResultPayload{
-				ToolCallID: tc.ToolCallID,
-				Status:     domain.ToolCallStatusSucceeded,
-				Result:     json.RawMessage(result),
-			})
-			s.recordEvent(ctx, tc.RunID, domain.EventTypeToolResult, payload)
-		} else {
-			// Client tool
-			// It should be dispatched again? Or just marked as running?
-			// If approved, we should send tool_request to client?
-			// Yes.
-			
-			// Emit tool_request event
-			// We need tool definition for timeout.
-			tool, _ := s.store.GetTool(ctx, tc.ToolName)
-			timeout := 60000
-			if tool != nil {
-				timeout = tool.TimeoutMs
-			}
-
-			payload, _ := json.Marshal(domain.ToolRequestPayload{
-				ToolCallID: tc.ToolCallID,
-				ToolName:   tc.ToolName,
-				Args:       tc.Args,
-				DeadlineTs: time.Now().Add(time.Duration(timeout) * time.Millisecond).UnixMilli(),
-			})
-			s.recordEvent(ctx, tc.RunID, domain.EventTypeToolRequest, payload)
-
-			// Push to ingress
-			if s.ingressClient != nil {
-				var argsObj interface{}
-				json.Unmarshal(tc.Args, &argsObj)
-				
-				// We need session ID. Run has session ID.
-				run, _ := s.store.GetRun(ctx, tc.RunID)
-				if run != nil {
-					s.ingressClient.PushEvent(run.SessionID, map[string]interface{}{
-						"type": "tool_request",
-						"ts": time.Now().UnixMilli(),
-						"run_id": tc.RunID,
-						"tool_call_id": tc.ToolCallID,
-						"tool_name": tc.ToolName,
-						"args": argsObj,
-						"deadline_ts": time.Now().Add(time.Duration(timeout) * time.Millisecond).UnixMilli(),
-					})
-				}
-			}
+			s.recordEvent(ctx, approval.RunID, domain.EventTypeToolResult, payload)
 		}
-	} else {
-		// Rejected
-		// Update ToolCall with result and completion time
-		s.store.UpdateToolCallResult(ctx, approval.ToolCallID, domain.ToolCallStatusRejected, nil, json.RawMessage(`{"code":"rejected","message":"approval rejected"}`))
+		return nil
+	}
 
-		// Emit tool result event (failed)
-		payload, _ := json.Marshal(domain.ToolResultPayload{
-			ToolCallID: approval.ToolCallID,
-			Status:     domain.ToolCallStatusRejected,
-			Error:      json.RawMessage(`{"code":"rejected","message":"approval rejected"}`),
-		})
-		s.recordEvent(ctx, approval.RunID, domain.EventTypeToolResult, payload)
+	// Approved: dispatch/execute tool call.
+	if tc.Kind == domain.ToolKindServer {
+		_, _ = s.store.UpdateToolCallStatus(ctx, tc.ToolCallID, domain.ToolCallStatusRunning)
+
+		tool, err := s.store.GetTool(ctx, tc.ToolName)
+		if err != nil {
+			return fmt.Errorf("failed to get tool: %w", err)
+		}
+		if tool == nil {
+			return fmt.Errorf("tool not found")
+		}
+		go s.executeServerToolAsync(tc, tool)
+		return nil
+	}
+
+	_, _ = s.store.UpdateToolCallStatus(ctx, tc.ToolCallID, domain.ToolCallStatusDispatched)
+
+	nowMs := time.Now().UnixMilli()
+	deadlineTs := time.Now().Add(time.Duration(tc.TimeoutMs) * time.Millisecond).UnixMilli()
+	requestPayload := domain.ToolRequestPayload{
+		ToolCallID: tc.ToolCallID,
+		ToolName:   tc.ToolName,
+		Args:       tc.Args,
+		DeadlineTs: deadlineTs,
+	}
+	s.recordEvent(ctx, tc.RunID, domain.EventTypeToolRequest, requestPayload)
+
+	if s.ingressClient != nil {
+		var argsObj interface{}
+		_ = json.Unmarshal(tc.Args, &argsObj)
+		run, _ := s.store.GetRun(ctx, tc.RunID)
+		if run != nil {
+			s.ingressClient.PushEvent(run.SessionID, map[string]interface{}{
+				"type":         "tool_request",
+				"ts":           nowMs,
+				"run_id":       tc.RunID,
+				"tool_call_id": tc.ToolCallID,
+				"tool_name":    tc.ToolName,
+				"args":         argsObj,
+				"deadline_ts":  deadlineTs,
+			})
+		}
 	}
 
 	return nil

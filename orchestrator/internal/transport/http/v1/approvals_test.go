@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -45,25 +46,16 @@ func TestDecideApprovalApprove(t *testing.T) {
 	updatedApproval, _ := db.GetApproval(ctx, approvalID)
 	assert.Equal(t, domain.ApprovalStatusApproved, updatedApproval.Status)
 
-	updatedToolCall, _ := db.GetToolCall(ctx, toolCallID)
-	// Status logic in Service might depend on ToolKind.
-	// In createPendingApproval, it calls InvokeTool for "payments.transfer".
-	// Need to check what InvokeTool creates.
-	// If it doesn't exist in DB tool registry, GetTool returns error or nil?
-	// Service InvokeTool checks GetTool.
-	// So I need to register tool "payments.transfer" in setup.
-	// Original test: `s` was used. `helpers.NewTestSQLiteStore` seeded tools?
-	// Let's check `helpers.NewTestSQLiteStore`.
-	// Assuming it seeds tools.
-
-	// In Service.UpdateApproval:
-	// If approved:
-	// If server tool -> Succeeded (Executed mock)
-	// If client tool -> ToolRequest event (Status still Running/Dispatched?)
-	
-	// "payments.transfer" is likely Server tool in seed?
-	// I'll assume it is server tool.
-	// So status should be Succeeded.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var updatedToolCall *domain.ToolCall
+	for time.Now().Before(deadline) {
+		updatedToolCall, _ = db.GetToolCall(ctx, toolCallID)
+		if updatedToolCall != nil && (updatedToolCall.Status == domain.ToolCallStatusSucceeded || updatedToolCall.Status == domain.ToolCallStatusFailed || updatedToolCall.Status == domain.ToolCallStatusTimeout) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assert.NotNil(t, updatedToolCall)
 	assert.Equal(t, domain.ToolCallStatusSucceeded, updatedToolCall.Status)
 	assert.NotNil(t, updatedToolCall.CompletedAt)
 

@@ -27,6 +27,7 @@ type ToolCall struct {
 	Result      json.RawMessage `json:"result,omitempty"`
 	Error       json.RawMessage `json:"error,omitempty"`
 	ApprovalID  string          `json:"approval_id,omitempty"`
+	TimeoutMs   int             `json:"timeout_ms"`
 	CreatedAt   time.Time       `json:"created_at"`
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 }
