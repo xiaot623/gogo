@@ -71,3 +71,20 @@ type Timestamps struct {
 	StartedAt   int64 `json:"started_at,omitempty"`
 	CompletedAt int64 `json:"completed_at,omitempty"`
 }
+
+// ApprovalDecisionRequest represents a decision on an approval.
+type ApprovalDecisionRequest struct {
+	Decision  string `json:"decision"` // APPROVED or REJECTED
+	Reason    string `json:"reason,omitempty"`
+	DecidedBy string `json:"decided_by,omitempty"`
+}
+
+// ApprovalDecisionResponse represents the response after submitting an approval decision.
+type ApprovalDecisionResponse struct {
+	ApprovalID     string          `json:"approval_id"`
+	Status         ApprovalStatus  `json:"status"`
+	ToolCallID     string          `json:"tool_call_id"`
+	ToolCallStatus ToolCallStatus  `json:"tool_call_status"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	Error          json.RawMessage `json:"error,omitempty"`
+}
