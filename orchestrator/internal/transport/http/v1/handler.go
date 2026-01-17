@@ -32,6 +32,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/v1/agents/:agent_id", h.GetAgent)
 
 	// Tool API
+	e.GET("/v1/tools", h.ListTools)
 	e.POST("/v1/tools/:tool_name/invoke", h.InvokeTool)
 	e.GET("/v1/tool_calls/:tool_call_id", h.GetToolCall)
 	e.POST("/v1/tool_calls/:tool_call_id/wait", h.WaitToolCall)

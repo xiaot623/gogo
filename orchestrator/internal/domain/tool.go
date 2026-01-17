@@ -8,8 +8,10 @@ import (
 // Tool represents a registered tool.
 type Tool struct {
 	Name      string          `json:"name"`
-	Kind      ToolKind        `json:"kind"`      // server or client
-	Policy    json.RawMessage `json:"policy"`    // policy config (optional, logic moved to OPA but kept for metadata)
+	Kind      ToolKind        `json:"kind"`                // server or client
+	Schema    json.RawMessage `json:"schema"`              // JSON Schema for tool parameters
+	ClientID  string          `json:"client_id,omitempty"` // client identifier (for client tools)
+	Policy    json.RawMessage `json:"policy"`              // policy config (optional, logic moved to OPA but kept for metadata)
 	TimeoutMs int             `json:"timeout_ms"`
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }

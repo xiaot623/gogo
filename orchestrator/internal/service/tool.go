@@ -178,26 +178,65 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 		}, nil
 	}
 
-	// Server Tool Execution (Synchronous Mock)
-	result := `{"status":"executed"}`
-	if toolName == "weather.query" {
-		result = `{"weather":"Sunny","temperature":25}`
-	}
-	s.store.UpdateToolCallResult(ctx, toolCallID, domain.ToolCallStatusSucceeded, []byte(result), nil)
-
-	// Emit result event
-	payload, _ := json.Marshal(domain.ToolResultPayload{
-		ToolCallID: toolCallID,
-		Status:     domain.ToolCallStatusSucceeded,
-		Result:     json.RawMessage(result),
-	})
-	s.recordEvent(ctx, req.RunID, domain.EventTypeToolResult, payload)
+	// Server Tool Execution (Async)
+	go s.executeServerToolAsync(toolCall, tool)
 
 	return &domain.ToolInvokeResponse{
-		Status:     "succeeded",
+		Status:     "pending",
 		ToolCallID: toolCallID,
-		Result:     json.RawMessage(result),
+		Reason:     "server_tool_executing",
 	}, nil
+}
+
+// executeServerToolAsync executes a server tool asynchronously.
+func (s *Service) executeServerToolAsync(toolCall *domain.ToolCall, tool *domain.Tool) {
+	ctx := context.Background()
+
+	// Update status to RUNNING
+	s.store.UpdateToolCallStatus(ctx, toolCall.ToolCallID, domain.ToolCallStatusRunning)
+
+	// Execute tool logic (mock implementation)
+	result, err := s.executeServerTool(ctx, tool.Name, toolCall.Args)
+
+	// Update result
+	if err != nil {
+		errData, _ := json.Marshal(map[string]string{
+			"code":    "execution_error",
+			"message": err.Error(),
+		})
+		s.store.UpdateToolCallResult(ctx, toolCall.ToolCallID, domain.ToolCallStatusFailed, nil, errData)
+
+		// Emit result event
+		payload, _ := json.Marshal(domain.ToolResultPayload{
+			ToolCallID: toolCall.ToolCallID,
+			Status:     domain.ToolCallStatusFailed,
+			Error:      errData,
+		})
+		s.recordEvent(ctx, toolCall.RunID, domain.EventTypeToolResult, payload)
+	} else {
+		s.store.UpdateToolCallResult(ctx, toolCall.ToolCallID, domain.ToolCallStatusSucceeded, result, nil)
+
+		// Emit result event
+		payload, _ := json.Marshal(domain.ToolResultPayload{
+			ToolCallID: toolCall.ToolCallID,
+			Status:     domain.ToolCallStatusSucceeded,
+			Result:     result,
+		})
+		s.recordEvent(ctx, toolCall.RunID, domain.EventTypeToolResult, payload)
+	}
+}
+
+// executeServerTool executes a server-side tool and returns the result.
+func (s *Service) executeServerTool(ctx context.Context, toolName string, args json.RawMessage) (json.RawMessage, error) {
+	// Mock implementation for different server tools
+	switch toolName {
+	case "weather.query":
+		return json.RawMessage(`{"weather":"Sunny","temperature":25}`), nil
+	case "payments.transfer":
+		return json.RawMessage(`{"status":"completed","transaction_id":"tx_123"}`), nil
+	default:
+		return json.RawMessage(`{"status":"executed"}`), nil
+	}
 }
 
 func (s *Service) GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error) {
@@ -305,5 +344,39 @@ func (s *Service) SubmitToolResult(ctx context.Context, toolCallID string, req d
 		Result:      req.Result,
 		Error:       req.Error,
 		CompletedAt: now.UnixMilli(),
+	}, nil
+}
+
+// ListTools returns all registered tools.
+func (s *Service) ListTools(ctx context.Context) ([]domain.Tool, error) {
+	return s.store.ListTools(ctx)
+}
+
+// RegisterTools registers tools from a client.
+func (s *Service) RegisterTools(ctx context.Context, req domain.ToolRegistrationRequest) (*domain.ToolRegistrationResponse, error) {
+	registeredCount := 0
+
+	for _, t := range req.Tools {
+		tool := &domain.Tool{
+			Name:      t.Name,
+			Kind:      domain.ToolKindClient,
+			Schema:    t.Schema,
+			ClientID:  req.ClientID,
+			TimeoutMs: t.TimeoutMs,
+		}
+		// Default timeout if not specified
+		if tool.TimeoutMs == 0 {
+			tool.TimeoutMs = 60000
+		}
+
+		if err := s.store.UpsertTool(ctx, tool); err != nil {
+			return nil, fmt.Errorf("failed to register tool %s: %w", t.Name, err)
+		}
+		registeredCount++
+	}
+
+	return &domain.ToolRegistrationResponse{
+		OK:              true,
+		RegisteredCount: registeredCount,
 	}, nil
 }

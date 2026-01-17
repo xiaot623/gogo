@@ -8,6 +8,28 @@ import (
 	"github.com/xiaot623/gogo/orchestrator/internal/domain"
 )
 
+// ListTools returns all registered tools.
+func (h *Handler) ListTools(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	tools, err := h.service.ListTools(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	items := make([]domain.ToolListItem, 0, len(tools))
+	for _, t := range tools {
+		items = append(items, domain.ToolListItem{
+			Name:      t.Name,
+			Source:    string(t.Kind), // Kind is "server" or "client"
+			Schema:    t.Schema,
+			TimeoutMs: t.TimeoutMs,
+		})
+	}
+
+	return c.JSON(http.StatusOK, domain.ListToolsResponse{Tools: items})
+}
+
 // InvokeTool handles tool invocation.
 func (h *Handler) InvokeTool(c echo.Context) error {
 	toolName := c.Param("tool_name")
@@ -88,31 +110,5 @@ func (h *Handler) WaitToolCall(c echo.Context) error {
 		resp.Timestamps.CompletedAt = tc.CompletedAt.UnixMilli()
 	}
 
-	return c.JSON(http.StatusOK, resp)
-}
-
-// SubmitToolResult handles client tool result submission.
-func (h *Handler) SubmitToolResult(c echo.Context) error {
-	toolCallID := c.Param("tool_call_id")
-	var req domain.ToolCallResultRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-	}
-
-	// Validate status
-	if req.Status != "SUCCEEDED" && req.Status != "FAILED" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status must be SUCCEEDED or FAILED"})
-	}
-
-	ctx := c.Request().Context()
-	
-	resp, err := h.service.SubmitToolResult(ctx, toolCallID, req)
-	if err != nil {
-		if err.Error() == "tool call not found" {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "tool call not found"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	
 	return c.JSON(http.StatusOK, resp)
 }

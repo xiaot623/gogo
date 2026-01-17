@@ -104,3 +104,35 @@ type ToolCallResultResponse struct {
 	Error       json.RawMessage `json:"error,omitempty"`
 	CompletedAt int64           `json:"completed_at"`
 }
+
+// ToolListItem represents a tool in the list response.
+type ToolListItem struct {
+	Name      string          `json:"name"`
+	Source    string          `json:"source"` // "server" or "client"
+	Schema    json.RawMessage `json:"schema,omitempty"`
+	TimeoutMs int             `json:"timeout_ms"`
+}
+
+// ListToolsResponse represents the response for listing tools.
+type ListToolsResponse struct {
+	Tools []ToolListItem `json:"tools"`
+}
+
+// ToolRegistrationItem represents a single tool to register.
+type ToolRegistrationItem struct {
+	Name      string          `json:"name"`
+	Schema    json.RawMessage `json:"schema"`
+	TimeoutMs int             `json:"timeout_ms,omitempty"`
+}
+
+// ToolRegistrationRequest represents a request to register tools from a client.
+type ToolRegistrationRequest struct {
+	ClientID string                 `json:"client_id"`
+	Tools    []ToolRegistrationItem `json:"tools"`
+}
+
+// ToolRegistrationResponse represents the response after registering tools.
+type ToolRegistrationResponse struct {
+	OK              bool `json:"ok"`
+	RegisteredCount int  `json:"registered_count"`
+}

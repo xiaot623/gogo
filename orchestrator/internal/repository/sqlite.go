@@ -99,10 +99,13 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS tools (
 			name TEXT PRIMARY KEY,
 			kind TEXT NOT NULL,
+			schema TEXT,
+			client_id TEXT,
 			policy TEXT,
 			timeout_ms INTEGER NOT NULL DEFAULT 60000,
 			metadata TEXT
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tools_client ON tools(client_id)`,
 		`CREATE TABLE IF NOT EXISTS tool_calls (
 			tool_call_id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -459,26 +462,44 @@ func (s *SQLiteStore) ListAgents(ctx context.Context) ([]domain.Agent, error) {
 
 // CreateTool creates a new tool.
 func (s *SQLiteStore) CreateTool(ctx context.Context, tool *domain.Tool) error {
+	schema, _ := json.Marshal(tool.Schema)
 	policy, _ := json.Marshal(tool.Policy)
 	metadata, _ := json.Marshal(tool.Metadata)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tools (name, kind, policy, timeout_ms, metadata) VALUES (?, ?, ?, ?, ?)`,
-		tool.Name, tool.Kind, string(policy), tool.TimeoutMs, string(metadata))
+		`INSERT INTO tools (name, kind, schema, client_id, policy, timeout_ms, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tool.Name, tool.Kind, string(schema), tool.ClientID, string(policy), tool.TimeoutMs, string(metadata))
+	return err
+}
+
+// UpsertTool creates or updates a tool.
+func (s *SQLiteStore) UpsertTool(ctx context.Context, tool *domain.Tool) error {
+	schema, _ := json.Marshal(tool.Schema)
+	policy, _ := json.Marshal(tool.Policy)
+	metadata, _ := json.Marshal(tool.Metadata)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO tools (name, kind, schema, client_id, policy, timeout_ms, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tool.Name, tool.Kind, string(schema), tool.ClientID, string(policy), tool.TimeoutMs, string(metadata))
 	return err
 }
 
 // GetTool retrieves a tool by name.
 func (s *SQLiteStore) GetTool(ctx context.Context, toolName string) (*domain.Tool, error) {
 	var tool domain.Tool
-	var policy, metadata sql.NullString
+	var schema, clientID, policy, metadata sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, kind, policy, timeout_ms, metadata FROM tools WHERE name = ?`,
-		toolName).Scan(&tool.Name, &tool.Kind, &policy, &tool.TimeoutMs, &metadata)
+		`SELECT name, kind, schema, client_id, policy, timeout_ms, metadata FROM tools WHERE name = ?`,
+		toolName).Scan(&tool.Name, &tool.Kind, &schema, &clientID, &policy, &tool.TimeoutMs, &metadata)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if schema.Valid {
+		tool.Schema = json.RawMessage(schema.String)
+	}
+	if clientID.Valid {
+		tool.ClientID = clientID.String
 	}
 	if policy.Valid {
 		tool.Policy = json.RawMessage(policy.String)
@@ -491,7 +512,7 @@ func (s *SQLiteStore) GetTool(ctx context.Context, toolName string) (*domain.Too
 
 // ListTools lists all tools.
 func (s *SQLiteStore) ListTools(ctx context.Context) ([]domain.Tool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, kind, policy, timeout_ms, metadata FROM tools`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, kind, schema, client_id, policy, timeout_ms, metadata FROM tools`)
 	if err != nil {
 		return nil, err
 	}
@@ -500,9 +521,15 @@ func (s *SQLiteStore) ListTools(ctx context.Context) ([]domain.Tool, error) {
 	var tools []domain.Tool
 	for rows.Next() {
 		var tool domain.Tool
-		var policy, metadata sql.NullString
-		if err := rows.Scan(&tool.Name, &tool.Kind, &policy, &tool.TimeoutMs, &metadata); err != nil {
+		var schema, clientID, policy, metadata sql.NullString
+		if err := rows.Scan(&tool.Name, &tool.Kind, &schema, &clientID, &policy, &tool.TimeoutMs, &metadata); err != nil {
 			return nil, err
+		}
+		if schema.Valid {
+			tool.Schema = json.RawMessage(schema.String)
+		}
+		if clientID.Valid {
+			tool.ClientID = clientID.String
 		}
 		if policy.Valid {
 			tool.Policy = json.RawMessage(policy.String)

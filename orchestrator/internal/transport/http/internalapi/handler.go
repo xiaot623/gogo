@@ -27,6 +27,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	// Event streaming
 	e.GET("/internal/runs/:run_id/events/stream", h.StreamRunEvents)
 
+	// Tool registration
+	e.POST("/internal/tools/register", h.RegisterTools)
+
 	// Tool calls
 	e.POST("/internal/tool_calls/:tool_call_id/submit", h.SubmitToolResult)
 

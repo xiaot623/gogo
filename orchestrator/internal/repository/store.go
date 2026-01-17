@@ -35,6 +35,7 @@ type Store interface {
 
 	// Tool operations
 	CreateTool(ctx context.Context, tool *domain.Tool) error
+	UpsertTool(ctx context.Context, tool *domain.Tool) error
 	GetTool(ctx context.Context, toolName string) (*domain.Tool, error)
 	ListTools(ctx context.Context) ([]domain.Tool, error)
 
