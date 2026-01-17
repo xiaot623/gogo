@@ -10,18 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	
 	"github.com/xiaot623/gogo/orchestrator/internal/adapter/agentclient"
 	"github.com/xiaot623/gogo/orchestrator/internal/adapter/ingress"
 	"github.com/xiaot623/gogo/orchestrator/internal/adapter/llm"
 	"github.com/xiaot623/gogo/orchestrator/internal/config"
 	"github.com/xiaot623/gogo/orchestrator/internal/repository"
 	"github.com/xiaot623/gogo/orchestrator/internal/service"
-	handler "github.com/xiaot623/gogo/orchestrator/internal/transport/http"
-	"github.com/xiaot623/gogo/orchestrator/internal/transport/http/internalapi"
-	"github.com/xiaot623/gogo/orchestrator/internal/transport/http/llmproxy"
+	transport "github.com/xiaot623/gogo/orchestrator/internal/transport/http"
 	"github.com/xiaot623/gogo/orchestrator/policy"
 )
 
@@ -61,34 +56,9 @@ func main() {
 	// Initialize service
 	svc := service.New(db, agentClient, ingressClient, llmClient, cfg, policyEngine)
 
-	// Initialize handlers
-	h := handler.NewHandler(svc)
-	internalH := internalapi.NewHandler(svc)
-	llmH := llmproxy.NewHandler(svc)
-
-	// Create external Echo server
-	externalServer := echo.New()
-	externalServer.HideBanner = true
-
-	// Middleware
-	externalServer.Use(middleware.Logger())
-	externalServer.Use(middleware.Recover())
-	externalServer.Use(middleware.CORS())
-
-	// Register external routes (for agents to call platform)
-	h.RegisterRoutes(externalServer)
-	llmH.RegisterRoutes(externalServer)
-
-	// Create internal Echo server (for ingress only)
-	internalServer := echo.New()
-	internalServer.HideBanner = true
-
-	// Middleware
-	internalServer.Use(middleware.Logger())
-	internalServer.Use(middleware.Recover())
-
-	// Register internal routes
-	internalH.RegisterRoutes(internalServer)
+	// Create servers
+	externalServer := transport.NewExternalServer(svc)
+	internalServer := transport.NewInternalServer(svc)
 
 	// Start external server
 	go func() {

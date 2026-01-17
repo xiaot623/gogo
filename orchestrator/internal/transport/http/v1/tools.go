@@ -1,4 +1,4 @@
-package handler
+package v1
 
 import (
 	"net/http"
@@ -108,7 +108,9 @@ func (h *Handler) SubmitToolResult(c echo.Context) error {
 	
 	resp, err := h.service.SubmitToolResult(ctx, toolCallID, req)
 	if err != nil {
-		// Differentiate errors? For now 500.
+		if err.Error() == "tool call not found" {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "tool call not found"})
+		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	

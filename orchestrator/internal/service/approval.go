@@ -123,6 +123,9 @@ func (s *Service) UpdateApproval(ctx context.Context, approvalID string, req dom
 		}
 	} else {
 		// Rejected
+		// Update ToolCall with result and completion time
+		s.store.UpdateToolCallResult(ctx, approval.ToolCallID, domain.ToolCallStatusRejected, nil, json.RawMessage(`{"code":"rejected","message":"approval rejected"}`))
+
 		// Emit tool result event (failed)
 		payload, _ := json.Marshal(domain.ToolResultPayload{
 			ToolCallID: approval.ToolCallID,

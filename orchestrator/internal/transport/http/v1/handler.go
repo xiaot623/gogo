@@ -1,5 +1,5 @@
 // Package handler provides HTTP handlers for the orchestrator.
-package handler
+package v1
 
 import (
 	"net/http"
