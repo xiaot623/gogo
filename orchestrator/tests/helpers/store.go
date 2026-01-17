@@ -3,7 +3,7 @@ package helpers
 import (
 	"testing"
 
-	"github.com/xiaot623/gogo/orchestrator/store"
+	"github.com/xiaot623/gogo/orchestrator/internal/repository"
 )
 
 func NewTestSQLiteStore(t *testing.T) *store.SQLiteStore {

@@ -12,13 +12,17 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/xiaot623/gogo/orchestrator/agentclient"
-	"github.com/xiaot623/gogo/orchestrator/api"
-	"github.com/xiaot623/gogo/orchestrator/api/internalapi"
-	"github.com/xiaot623/gogo/orchestrator/config"
-	"github.com/xiaot623/gogo/orchestrator/llmproxy"
+	
+	"github.com/xiaot623/gogo/orchestrator/internal/adapter/agentclient"
+	"github.com/xiaot623/gogo/orchestrator/internal/adapter/ingress"
+	"github.com/xiaot623/gogo/orchestrator/internal/adapter/llm"
+	"github.com/xiaot623/gogo/orchestrator/internal/config"
+	"github.com/xiaot623/gogo/orchestrator/internal/repository"
+	"github.com/xiaot623/gogo/orchestrator/internal/service"
+	handler "github.com/xiaot623/gogo/orchestrator/internal/transport/http"
+	"github.com/xiaot623/gogo/orchestrator/internal/transport/http/internalapi"
+	"github.com/xiaot623/gogo/orchestrator/internal/transport/http/llmproxy"
 	"github.com/xiaot623/gogo/orchestrator/policy"
-	"github.com/xiaot623/gogo/orchestrator/store"
 )
 
 func main() {
@@ -41,6 +45,12 @@ func main() {
 	// Initialize agent client
 	agentClient := agentclient.NewClient()
 
+	// Initialize ingress client
+	ingressClient := ingress.NewClient(cfg.IngressURL)
+
+	// Initialize LLM client
+	llmClient := llm.NewClient(cfg.LiteLLMURL, cfg.LiteLLMAPIKey, cfg.LLMTimeout)
+
 	// Initialize policy engine
 	ctx := context.Background()
 	policyEngine, err := policy.NewEngine(ctx, policy.DefaultPolicy)
@@ -48,14 +58,13 @@ func main() {
 		log.Fatalf("Failed to initialize policy engine: %v", err)
 	}
 
-	// Initialize handler
-	handler := api.NewHandler(db, agentClient, cfg, policyEngine)
+	// Initialize service
+	svc := service.New(db, agentClient, ingressClient, llmClient, cfg, policyEngine)
 
-	// Initialize internal handler
-	internalHandler := internalapi.NewHandler(db, agentClient, cfg, policyEngine)
-
-	// Initialize LLM proxy handler
-	llmHandler := llmproxy.NewHandler(cfg, db)
+	// Initialize handlers
+	h := handler.NewHandler(svc)
+	internalH := internalapi.NewHandler(svc)
+	llmH := llmproxy.NewHandler(svc)
 
 	// Create external Echo server
 	externalServer := echo.New()
@@ -67,8 +76,8 @@ func main() {
 	externalServer.Use(middleware.CORS())
 
 	// Register external routes (for agents to call platform)
-	handler.RegisterRoutes(externalServer)
-	llmHandler.RegisterRoutes(externalServer)
+	h.RegisterRoutes(externalServer)
+	llmH.RegisterRoutes(externalServer)
 
 	// Create internal Echo server (for ingress only)
 	internalServer := echo.New()
@@ -79,7 +88,7 @@ func main() {
 	internalServer.Use(middleware.Recover())
 
 	// Register internal routes
-	internalHandler.RegisterRoutes(internalServer)
+	internalH.RegisterRoutes(internalServer)
 
 	// Start external server
 	go func() {
