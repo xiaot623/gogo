@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/xiaot623/gogo/orchestrator/agentclient"
 	"github.com/xiaot623/gogo/orchestrator/api"
+	"github.com/xiaot623/gogo/orchestrator/api/internalapi"
 	"github.com/xiaot623/gogo/orchestrator/config"
 	"github.com/xiaot623/gogo/orchestrator/llmproxy"
 	"github.com/xiaot623/gogo/orchestrator/policy"
@@ -25,7 +26,8 @@ func main() {
 	cfg := config.Load()
 
 	log.Printf("Starting orchestrator...")
-	log.Printf("HTTP Port: %d", cfg.HTTPPort)
+	log.Printf("External HTTP Port: %d", cfg.HTTPPort)
+	log.Printf("Internal HTTP Port: %d", cfg.InternalPort)
 	log.Printf("Database: %s", cfg.DatabaseURL)
 	log.Printf("LiteLLM URL: %s", cfg.LiteLLMURL)
 
@@ -49,31 +51,54 @@ func main() {
 	// Initialize handler
 	handler := api.NewHandler(db, agentClient, cfg, policyEngine)
 
+	// Initialize internal handler
+	internalHandler := internalapi.NewHandler(db, agentClient, cfg, policyEngine)
+
 	// Initialize LLM proxy handler
 	llmHandler := llmproxy.NewHandler(cfg, db)
 
-	// Create Echo server
-	e := echo.New()
-	e.HideBanner = true
+	// Create external Echo server
+	externalServer := echo.New()
+	externalServer.HideBanner = true
 
 	// Middleware
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	externalServer.Use(middleware.Logger())
+	externalServer.Use(middleware.Recover())
+	externalServer.Use(middleware.CORS())
 
-	// Register routes
-	handler.RegisterRoutes(e)
-	llmHandler.RegisterRoutes(e)
+	// Register external routes (for agents to call platform)
+	handler.RegisterRoutes(externalServer)
+	llmHandler.RegisterRoutes(externalServer)
 
-	// Start server
+	// Create internal Echo server (for ingress only)
+	internalServer := echo.New()
+	internalServer.HideBanner = true
+
+	// Middleware
+	internalServer.Use(middleware.Logger())
+	internalServer.Use(middleware.Recover())
+
+	// Register internal routes
+	internalHandler.RegisterRoutes(internalServer)
+
+	// Start external server
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+		if err := externalServer.Start(addr); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start external server: %v", err)
 		}
 	}()
 
-	log.Printf("Orchestrator started on port %d", cfg.HTTPPort)
+	// Start internal server
+	go func() {
+		addr := fmt.Sprintf(":%d", cfg.InternalPort)
+		if err := internalServer.Start(addr); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start internal server: %v", err)
+		}
+	}()
+
+	log.Printf("External API started on port %d", cfg.HTTPPort)
+	log.Printf("Internal API started on port %d", cfg.InternalPort)
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -86,8 +111,12 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := e.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Failed to shutdown server gracefully: %v", err)
+	// Shutdown both servers
+	if err := externalServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Failed to shutdown external server gracefully: %v", err)
+	}
+	if err := internalServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Failed to shutdown internal server gracefully: %v", err)
 	}
 
 	log.Println("Orchestrator stopped")

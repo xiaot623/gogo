@@ -29,12 +29,9 @@ func NewHandler(store store.Store, agentClient *agentclient.Client, config *conf
 	}
 }
 
-// RegisterRoutes registers routes with the echo server.
+// RegisterRoutes registers external routes with the echo server.
 func (h *Handler) RegisterRoutes(e *echo.Echo) {
-	// Internal API (for ingress)
-	e.POST("/internal/invoke", h.InternalInvoke)
-
-	// Public API
+	// Public API (for retrieving data)
 	e.GET("/v1/runs/:run_id/events", h.GetRunEvents)
 	e.GET("/v1/sessions/:session_id/messages", h.GetSessionMessages)
 
@@ -44,11 +41,9 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.GET("/v1/agents/:agent_id", h.GetAgent)
 
 	// Tool API
-	e.POST("/v1/tools/:tool_name/invoke", h.InvokeTool) // Note: doc says /v1/tools/{tool_name}:invoke but echo uses /:param
+	e.POST("/v1/tools/:tool_name/invoke", h.InvokeTool)
 	e.GET("/v1/tool_calls/:tool_call_id", h.GetToolCall)
-	e.POST("/v1/tool_calls/:tool_call_id/wait", h.WaitToolCall) // Note: doc says :wait
-	e.POST("/v1/tool_calls/:tool_call_id/result", h.SubmitToolResult)
-	e.POST("/v1/approvals/:approval_id/decide", h.DecideApproval)
+	e.POST("/v1/tool_calls/:tool_call_id/wait", h.WaitToolCall)
 
 	e.GET("/health", h.Health)
 }
