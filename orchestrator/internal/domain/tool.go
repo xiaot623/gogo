@@ -18,18 +18,19 @@ type Tool struct {
 
 // ToolCall represents a tool execution record.
 type ToolCall struct {
-	ToolCallID  string          `json:"tool_call_id"`
-	RunID       string          `json:"run_id"`
-	ToolName    string          `json:"tool_name"`
-	Kind        ToolKind        `json:"kind"`
-	Status      ToolCallStatus  `json:"status"`
-	Args        json.RawMessage `json:"args"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Error       json.RawMessage `json:"error,omitempty"`
-	ApprovalID  string          `json:"approval_id,omitempty"`
-	TimeoutMs   int             `json:"timeout_ms"`
-	CreatedAt   time.Time       `json:"created_at"`
-	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	ToolCallID     string          `json:"tool_call_id"`
+	RunID          string          `json:"run_id"`
+	ToolName       string          `json:"tool_name"`
+	Kind           ToolKind        `json:"kind"`
+	Status         ToolCallStatus  `json:"status"`
+	Args           json.RawMessage `json:"args"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	Error          json.RawMessage `json:"error,omitempty"`
+	ApprovalID     string          `json:"approval_id,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	TimeoutMs      int             `json:"timeout_ms"`
+	CreatedAt      time.Time       `json:"created_at"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 }
 
 // Approval represents an approval request.

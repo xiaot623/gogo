@@ -122,6 +122,7 @@ func (s *SQLiteStore) migrate() error {
 			result TEXT,
 			error TEXT,
 			approval_id TEXT,
+			idempotency_key TEXT,
 			timeout_ms INTEGER NOT NULL DEFAULT 60000,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME,
@@ -151,6 +152,12 @@ func (s *SQLiteStore) migrate() error {
 
 	// Add new columns for existing DBs (SQLite has limited ALTER TABLE support).
 	if err := s.ensureColumn("tool_calls", "timeout_ms", "ALTER TABLE tool_calls ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 60000"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("tool_calls", "idempotency_key", "ALTER TABLE tool_calls ADD COLUMN idempotency_key TEXT"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_calls_idempotency ON tool_calls(run_id, tool_name, idempotency_key, created_at)`); err != nil {
 		return err
 	}
 
@@ -587,20 +594,20 @@ func (s *SQLiteStore) ListTools(ctx context.Context) ([]domain.Tool, error) {
 func (s *SQLiteStore) CreateToolCall(ctx context.Context, toolCall *domain.ToolCall) error {
 	args, _ := json.Marshal(toolCall.Args)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tool_calls (tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, timeout_ms, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		toolCall.ToolCallID, toolCall.RunID, toolCall.ToolName, toolCall.Kind, toolCall.Status, string(args), nullStringBytes(toolCall.Result), nullStringBytes(toolCall.Error), nullString(toolCall.ApprovalID), toolCall.TimeoutMs, toolCall.CreatedAt, toolCall.CompletedAt)
+		`INSERT INTO tool_calls (tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, idempotency_key, timeout_ms, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		toolCall.ToolCallID, toolCall.RunID, toolCall.ToolName, toolCall.Kind, toolCall.Status, string(args), nullStringBytes(toolCall.Result), nullStringBytes(toolCall.Error), nullString(toolCall.ApprovalID), nullString(toolCall.IdempotencyKey), toolCall.TimeoutMs, toolCall.CreatedAt, toolCall.CompletedAt)
 	return err
 }
 
 // GetToolCall retrieves a tool call by ID.
 func (s *SQLiteStore) GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error) {
 	var tc domain.ToolCall
-	var args, result, errData, approvalID sql.NullString
+	var args, result, errData, approvalID, idempotencyKey sql.NullString
 	var completedAt sql.NullTime
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, timeout_ms, created_at, completed_at FROM tool_calls WHERE tool_call_id = ?`,
-		toolCallID).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &tc.TimeoutMs, &tc.CreatedAt, &completedAt)
+		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, idempotency_key, timeout_ms, created_at, completed_at FROM tool_calls WHERE tool_call_id = ?`,
+		toolCallID).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &idempotencyKey, &tc.TimeoutMs, &tc.CreatedAt, &completedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -618,6 +625,49 @@ func (s *SQLiteStore) GetToolCall(ctx context.Context, toolCallID string) (*doma
 	}
 	if approvalID.Valid {
 		tc.ApprovalID = approvalID.String
+	}
+	if idempotencyKey.Valid {
+		tc.IdempotencyKey = idempotencyKey.String
+	}
+	if completedAt.Valid {
+		tc.CompletedAt = &completedAt.Time
+	}
+	return &tc, nil
+}
+
+// GetToolCallByIdempotencyKey retrieves the most recent tool call by idempotency key within a run.
+func (s *SQLiteStore) GetToolCallByIdempotencyKey(ctx context.Context, runID string, toolName string, idempotencyKey string) (*domain.ToolCall, error) {
+	var tc domain.ToolCall
+	var args, result, errData, approvalID, idemKey sql.NullString
+	var completedAt sql.NullTime
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT tool_call_id, run_id, tool_name, kind, status, args, result, error, approval_id, idempotency_key, timeout_ms, created_at, completed_at
+		 FROM tool_calls
+		 WHERE run_id = ? AND tool_name = ? AND idempotency_key = ?
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		runID, toolName, idempotencyKey).Scan(&tc.ToolCallID, &tc.RunID, &tc.ToolName, &tc.Kind, &tc.Status, &args, &result, &errData, &approvalID, &idemKey, &tc.TimeoutMs, &tc.CreatedAt, &completedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if args.Valid {
+		tc.Args = json.RawMessage(args.String)
+	}
+	if result.Valid {
+		tc.Result = json.RawMessage(result.String)
+	}
+	if errData.Valid {
+		tc.Error = json.RawMessage(errData.String)
+	}
+	if approvalID.Valid {
+		tc.ApprovalID = approvalID.String
+	}
+	if idemKey.Valid {
+		tc.IdempotencyKey = idemKey.String
 	}
 	if completedAt.Valid {
 		tc.CompletedAt = &completedAt.Time

@@ -10,6 +10,8 @@ import (
 	"github.com/xiaot623/gogo/orchestrator/internal/domain"
 )
 
+const toolInvokeIdempotencyTTL = 24 * time.Hour
+
 func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.ToolInvokeRequest) (*domain.ToolInvokeResponse, error) {
 	// 1. Get Run and User ID (for policy)
 	run, err := s.store.GetRun(ctx, req.RunID)
@@ -23,6 +25,16 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 	session, err := s.store.GetSession(ctx, run.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	if req.IdempotencyKey != "" {
+		existing, err := s.store.GetToolCallByIdempotencyKey(ctx, req.RunID, toolName, req.IdempotencyKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check tool idempotency: %w", err)
+		}
+		if existing != nil && time.Since(existing.CreatedAt) <= toolInvokeIdempotencyTTL {
+			return toolInvokeResponseFromToolCall(existing), nil
+		}
 	}
 
 	// 2. Get Tool
@@ -68,14 +80,15 @@ func (s *Service) InvokeTool(ctx context.Context, toolName string, req domain.To
 
 	// Create ToolCall
 	toolCall := &domain.ToolCall{
-		ToolCallID: toolCallID,
-		RunID:      req.RunID,
-		ToolName:   toolName,
-		Kind:       tool.Kind,
-		Status:     domain.ToolCallStatusCreated,
-		Args:       req.Args,
-		TimeoutMs:  timeoutMs,
-		CreatedAt:  now,
+		ToolCallID:     toolCallID,
+		RunID:          req.RunID,
+		ToolName:       toolName,
+		Kind:           tool.Kind,
+		Status:         domain.ToolCallStatusCreated,
+		Args:           req.Args,
+		IdempotencyKey: req.IdempotencyKey,
+		TimeoutMs:      timeoutMs,
+		CreatedAt:      now,
 	}
 
 	// Handle Decision
@@ -458,4 +471,61 @@ func (s *Service) RegisterTools(ctx context.Context, req domain.ToolRegistration
 		OK:              true,
 		RegisteredCount: registeredCount,
 	}, nil
+}
+
+func toolInvokeResponseFromToolCall(tc *domain.ToolCall) *domain.ToolInvokeResponse {
+	resp := &domain.ToolInvokeResponse{
+		ToolCallID: tc.ToolCallID,
+	}
+
+	switch tc.Status {
+	case domain.ToolCallStatusSucceeded:
+		resp.Status = "succeeded"
+		resp.Result = tc.Result
+	case domain.ToolCallStatusBlocked:
+		resp.Status = "failed"
+		resp.Error = toolErrorFromRaw(tc.Error, "blocked", "tool blocked")
+	case domain.ToolCallStatusRejected:
+		resp.Status = "failed"
+		resp.Error = toolErrorFromRaw(tc.Error, "rejected", "approval rejected")
+	case domain.ToolCallStatusFailed:
+		resp.Status = "failed"
+		resp.Error = toolErrorFromRaw(tc.Error, "failed", "tool failed")
+	case domain.ToolCallStatusTimeout:
+		resp.Status = "failed"
+		resp.Error = toolErrorFromRaw(tc.Error, "timeout", "tool timed out")
+	case domain.ToolCallStatusWaitingApproval:
+		resp.Status = "pending"
+		resp.Reason = "waiting_approval"
+	case domain.ToolCallStatusDispatched:
+		resp.Status = "pending"
+		resp.Reason = "waiting_client"
+	case domain.ToolCallStatusRunning:
+		resp.Status = "pending"
+		resp.Reason = "server_tool_executing"
+	default:
+		resp.Status = "pending"
+		resp.Reason = "pending"
+	}
+
+	return resp
+}
+
+func toolErrorFromRaw(errData json.RawMessage, fallbackCode string, fallbackMessage string) *domain.ToolError {
+	if len(errData) == 0 {
+		return &domain.ToolError{Code: fallbackCode, Message: fallbackMessage}
+	}
+
+	var errObj domain.ToolError
+	if err := json.Unmarshal(errData, &errObj); err == nil {
+		if errObj.Code == "" {
+			errObj.Code = fallbackCode
+		}
+		if errObj.Message == "" {
+			errObj.Message = fallbackMessage
+		}
+		return &errObj
+	}
+
+	return &domain.ToolError{Code: fallbackCode, Message: string(errData)}
 }

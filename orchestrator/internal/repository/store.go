@@ -42,6 +42,7 @@ type Store interface {
 	// ToolCall operations
 	CreateToolCall(ctx context.Context, toolCall *domain.ToolCall) error
 	GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error)
+	GetToolCallByIdempotencyKey(ctx context.Context, runID string, toolName string, idempotencyKey string) (*domain.ToolCall, error)
 	UpdateToolCallStatus(ctx context.Context, toolCallID string, status domain.ToolCallStatus) (bool, error)
 	UpdateToolCallResult(ctx context.Context, toolCallID string, status domain.ToolCallStatus, result []byte, errData []byte) (bool, error)
 	UpdateToolCallApproval(ctx context.Context, toolCallID string, approvalID string, status domain.ToolCallStatus) (bool, error)
