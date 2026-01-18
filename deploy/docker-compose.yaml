@@ -1,0 +1,150 @@
+# =============================================================================
+# GoGo Production Deployment
+# =============================================================================
+# Usage:
+#   1. Copy .env.example to .env and configure your API keys
+#   2. Run: docker-compose up -d
+# =============================================================================
+
+name: gogo
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL - Database for LiteLLM
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: gogo_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-litellm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellm}
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-litellm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - gogo_network
+
+  # ---------------------------------------------------------------------------
+  # LiteLLM - LLM Proxy Gateway
+  # ---------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: gogo_litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-litellm}@postgres:5432/${POSTGRES_DB:-litellm}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: always
+    networks:
+      - gogo_network
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator - Core Agent Orchestration Service
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ../orchestrator
+      dockerfile: Dockerfile
+    image: gogo/orchestrator:latest
+    container_name: gogo_orchestrator
+    ports:
+      - "${ORCHESTRATOR_HTTP_PORT:-8080}:8080"
+      - "${ORCHESTRATOR_INTERNAL_PORT:-8081}:8081"
+    environment:
+      HTTP_PORT: "8080"
+      INTERNAL_PORT: "8081"
+      DATABASE_URL: ${ORCHESTRATOR_DATABASE_URL:-file:orchestrator.db?cache=shared&mode=rwc}
+      INGRESS_URL: "http://ingress:8091"
+      LITELLM_URL: "http://litellm:4000"
+      LITELLM_API_KEY: ${ORCHESTRATOR_LITELLM_API_KEY:-}
+      AGENT_TIMEOUT_MS: ${AGENT_TIMEOUT_MS:-300000}
+      TOOL_TIMEOUT_MS: ${TOOL_TIMEOUT_MS:-60000}
+      APPROVAL_TIMEOUT_MS: ${APPROVAL_TIMEOUT_MS:-600000}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-120000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - orchestrator_data:/app/data
+    depends_on:
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    networks:
+      - gogo_network
+
+  # ---------------------------------------------------------------------------
+  # Ingress - WebSocket Gateway for Client Connections
+  # ---------------------------------------------------------------------------
+  ingress:
+    build:
+      context: ../ingress
+      dockerfile: Dockerfile
+    image: gogo/ingress:latest
+    container_name: gogo_ingress
+    ports:
+      - "${INGRESS_WS_PORT:-8090}:8090"
+      - "${INGRESS_HTTP_PORT:-8091}:8091"
+    environment:
+      WS_PORT: "8090"
+      HTTP_PORT: "8091"
+      ORCHESTRATOR_URL: "http://orchestrator:8081"
+      API_KEY: ${INGRESS_API_KEY:-}
+      WS_PING_INTERVAL_MS: ${WS_PING_INTERVAL_MS:-30000}
+      WS_WRITE_TIMEOUT_MS: ${WS_WRITE_TIMEOUT_MS:-10000}
+      WS_READ_TIMEOUT_MS: ${WS_READ_TIMEOUT_MS:-60000}
+      WS_MAX_MESSAGE_SIZE: ${WS_MAX_MESSAGE_SIZE:-65536}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8091/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    networks:
+      - gogo_network
+
+# -----------------------------------------------------------------------------
+# Volumes
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+  orchestrator_data:
+    driver: local
+
+# -----------------------------------------------------------------------------
+# Networks
+# -----------------------------------------------------------------------------
+networks:
+  gogo_network:
+    driver: bridge

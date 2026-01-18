@@ -1,0 +1,68 @@
+# =============================================================================
+# LiteLLM Configuration
+# =============================================================================
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Model List - Define available LLM models
+# -----------------------------------------------------------------------------
+model_list:
+  # OpenAI Models
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Anthropic Models
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-5-sonnet-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Model Aliases (for convenience)
+  - model_name: gpt-4
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+# -----------------------------------------------------------------------------
+# General Settings
+# -----------------------------------------------------------------------------
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+# -----------------------------------------------------------------------------
+# Litellm Settings
+# -----------------------------------------------------------------------------
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  num_retries: 3
+  request_timeout: 120
