@@ -232,7 +232,7 @@ func (s *Service) executeServerToolAsync(toolCall *domain.ToolCall, tool *domain
 	// Update status to RUNNING
 	_, _ = s.store.UpdateToolCallStatus(ctx, toolCall.ToolCallID, domain.ToolCallStatusRunning)
 
-	// Execute tool logic (mock implementation)
+	// Execute tool logic via the executor registry.
 	type execResult struct {
 		result json.RawMessage
 		err    error
@@ -297,17 +297,12 @@ func (s *Service) executeServerToolAsync(toolCall *domain.ToolCall, tool *domain
 	}
 }
 
-// executeServerTool executes a server-side tool and returns the result.
+// executeServerTool executes a server-side tool via the executor registry.
 func (s *Service) executeServerTool(ctx context.Context, toolName string, args json.RawMessage) (json.RawMessage, error) {
-	// Mock implementation for different server tools
-	switch toolName {
-	case "weather.query":
-		return json.RawMessage(`{"weather":"Sunny","temperature":25}`), nil
-	case "payments.transfer":
-		return json.RawMessage(`{"status":"completed","transaction_id":"tx_123"}`), nil
-	default:
-		return json.RawMessage(`{"status":"executed"}`), nil
+	if s.toolRegistry == nil {
+		return nil, fmt.Errorf("tool registry not configured")
 	}
+	return s.toolRegistry.Execute(ctx, toolName, args)
 }
 
 func (s *Service) GetToolCall(ctx context.Context, toolCallID string) (*domain.ToolCall, error) {
