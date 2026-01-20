@@ -14,7 +14,7 @@ type Service struct {
 	store         store.Store
 	agentClient   *agentclient.Client
 	ingressClient *ingress.Client
-	llmClient     *llm.Client
+	llmClient     llm.LLMClient
 	config        *config.Config
 	policyEngine  *policy.Engine
 	toolRegistry  *tools.Registry
@@ -31,7 +31,7 @@ func WithToolRegistry(registry *tools.Registry) Option {
 	}
 }
 
-func New(store store.Store, agentClient *agentclient.Client, ingressClient *ingress.Client, llmClient *llm.Client, cfg *config.Config, policyEngine *policy.Engine, opts ...Option) *Service {
+func New(store store.Store, agentClient *agentclient.Client, ingressClient *ingress.Client, llmClient llm.LLMClient, cfg *config.Config, policyEngine *policy.Engine, opts ...Option) *Service {
 	svc := &Service{
 		store:         store,
 		agentClient:   agentClient,

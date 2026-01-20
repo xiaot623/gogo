@@ -44,8 +44,8 @@ func main() {
 	// Initialize ingress client
 	ingressClient := ingress.NewClient(cfg.IngressRPCAddr)
 
-	// Initialize LLM client
-	llmClient := llm.NewClient(cfg.LiteLLMURL, cfg.LiteLLMAPIKey, cfg.LLMTimeout)
+	// Initialize LLM client (uses mock if GOGO_MODE=MOCK)
+	llmClient := llm.NewLLMClient(cfg.LiteLLMURL, cfg.LiteLLMAPIKey, cfg.LLMTimeout)
 
 	// Initialize policy engine
 	ctx := context.Background()

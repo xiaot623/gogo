@@ -1,10 +1,14 @@
 """
 Demo agent using the agent-sdk.
 
-This is a simple example showing how to use the SDK to build an agent.
+This is a mock implementation that simulates calling the llmproxy streaming interface
+and prints the SSE response format.
 """
 
 import asyncio
+import json
+import time
+import uuid
 from collections.abc import AsyncIterator
 
 from agent_sdk import Agent, InvokeContext, SSEResponse, Usage
@@ -12,12 +16,7 @@ from agent_sdk import Agent, InvokeContext, SSEResponse, Usage
 
 class DemoAgent(Agent):
     """
-    A demo agent that echoes user input with mock responses.
-
-    This demonstrates:
-    - Subclassing Agent
-    - Using SSEResponse for streaming
-    - Implementing the invoke method
+    A mock agent that simulates the llmproxy streaming SSE response.
     """
 
     def __init__(self):
@@ -25,47 +24,82 @@ class DemoAgent(Agent):
             agent_id="demo",
             name="Demo Agent",
             version="0.1.0",
-            capabilities=["streaming", "echo"],
+            capabilities=["streaming", "llm-mock"],
         )
-        self._responses = {
-            "hello": "Hello! I'm the demo agent. How can I help you today?",
-            "weather": "The weather today is sunny with a temperature of 25C. Perfect for outdoor activities!",
-            "help": "I'm a demo agent that can help you test the multi-agent platform. Try asking me about the weather or just say hello!",
-        }
-
-    def _generate_response(self, user_input: str) -> str:
-        """Generate a mock response based on user input."""
-        lower_input = user_input.lower()
-        for keyword, response in self._responses.items():
-            if keyword in lower_input:
-                return response
-
-        return f'I received your message: "{user_input}". This is a demo response from the agent.'
 
     async def invoke(self, ctx: InvokeContext) -> AsyncIterator[str]:
-        """Handle an invocation request with streaming response."""
+        """Handle an invocation request, simulating llmproxy SSE streaming."""
+        # Print the incoming request
+        print("\n" + "=" * 60)
+        print("INCOMING REQUEST:")
+        print(f"  run_id: {ctx.run_id}")
+        print(f"  input: {ctx.input_message.content}")
+        print("=" * 60)
+
         sse = SSEResponse(run_id=ctx.run_id)
+        user_input = ctx.input_message.content
 
-        # Generate response
-        response_text = self._generate_response(ctx.input_message.content)
+        # Mock response content
+        response_content = f"This is a mock LLM response for: {user_input}"
+        chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        created = int(time.time())
+        model = "mock-gpt-4"
 
-        # Stream the response character by character
+        print("\n[Mock llmproxy /v1/chat/completions SSE stream]")
+        print("-" * 60)
+
+        # First chunk with role
+        first_chunk = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+        }
+        print(f"data: {json.dumps(first_chunk)}\n")
+
+        # Stream content chunks
         chunk_size = 5
-        delay = 0.05
+        delay = 0.03
+        full_text = ""
 
-        for i in range(0, len(response_text), chunk_size):
-            chunk = response_text[i : i + chunk_size]
-            yield sse.delta(chunk)
+        for i in range(0, len(response_content), chunk_size):
+            chunk_text = response_content[i : i + chunk_size]
+            full_text += chunk_text
+
+            stream_chunk = {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}],
+            }
+            print(f"data: {json.dumps(stream_chunk)}\n")
+            yield sse.delta(chunk_text)
             await asyncio.sleep(delay)
 
-        # Send done event with usage stats
+        # Final chunk with finish_reason
+        final_chunk = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        print(f"data: {json.dumps(final_chunk)}\n")
+        print("data: [DONE]\n")
+        print("-" * 60)
+
+        # Usage stats
+        prompt_tokens = len(user_input.split())
+        completion_tokens = len(response_content.split())
         usage = Usage(
-            tokens=len(response_text.split()),
-            prompt_tokens=len(ctx.input_message.content.split()),
-            completion_tokens=len(response_text.split()),
-            duration_ms=int((len(response_text) / chunk_size) * delay * 1000),
+            tokens=prompt_tokens + completion_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            duration_ms=int((len(response_content) / chunk_size) * delay * 1000),
         )
-        yield sse.done(final_message=response_text, usage=usage)
+        yield sse.done(final_message=full_text, usage=usage)
 
 
 # Create the agent instance
