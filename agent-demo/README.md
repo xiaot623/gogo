@@ -71,16 +71,7 @@ curl -X POST http://localhost:8080/v1/agents/register \
   -d '{"agent_id":"demo","name":"Demo Agent","endpoint":"http://localhost:8000"}'
 ```
 
-4. Invoke through orchestrator:
-```bash
-curl -X POST http://localhost:8080/internal/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "s1",
-    "agent_id": "demo",
-    "input_message": {"role": "user", "content": "hello"}
-  }'
-```
+4. Invoke through ingress (WebSocket) or the internal RPC `Orchestrator.Invoke` method.
 
 ## SSE Event Format
 

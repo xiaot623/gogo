@@ -40,12 +40,12 @@ services:
     container_name: gogo_orchestrator
     ports:
       - "8080:8080"   # External API
-      - "8081:8081"   # Internal API (for ingress)
+      - "8081:8081"   # Internal RPC (for ingress)
     environment:
       HTTP_PORT: "8080"
       INTERNAL_PORT: "8081"
       DATABASE_URL: "file:orchestrator.db?cache=shared&mode=rwc"
-      INGRESS_URL: "http://ingress:8091"
+      INGRESS_RPC_ADDR: "ingress:8091"
       LITELLM_URL: "http://litellm:4000"
       LOG_LEVEL: "info"
     depends_on:
@@ -64,17 +64,17 @@ services:
     container_name: gogo_ingress
     ports:
       - "8090:8090"   # WebSocket (external)
-      - "8091:8091"   # Internal HTTP (/internal/send, /health)
+      - "8091:8091"   # Internal RPC (event fanout)
     environment:
       WS_PORT: "8090"
-      HTTP_PORT: "8091"
-      ORCHESTRATOR_URL: "http://orchestrator:8081"
+      RPC_PORT: "8091"
+      ORCHESTRATOR_RPC_ADDR: "orchestrator:8081"
       API_KEY: ""
       LOG_LEVEL: "info"
     depends_on:
       - orchestrator
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8091/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/health"]
       interval: 10s
       timeout: 5s
       retries: 3

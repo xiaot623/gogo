@@ -1,30 +1,30 @@
-// Package orchestrator provides an HTTP client for the orchestrator internal API.
+// Package orchestrator provides an RPC client for the orchestrator internal API.
 package orchestrator
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"net"
+	"net/rpc/jsonrpc"
+	"net/url"
 	"strings"
 	"time"
 )
 
-// Client is an HTTP client for the orchestrator internal API.
+// Client is an RPC client for the orchestrator internal API.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	addr        string
+	dialTimeout time.Duration
+	callTimeout time.Duration
 }
 
 // NewClient creates a new orchestrator client.
 func NewClient(baseURL string) *Client {
 	return &Client{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		addr:        resolveRPCAddr(baseURL),
+		dialTimeout: 5 * time.Second,
+		callTimeout: 30 * time.Second,
 	}
 }
 
@@ -89,148 +89,130 @@ type CancelRunResponse struct {
 	Status string `json:"status"`
 }
 
-// ErrorResponse represents an error response from the orchestrator.
-type ErrorResponse struct {
-	Error string `json:"error"`
+// ToolCallResultArgs wraps tool call IDs with the tool result payload.
+type ToolCallResultArgs struct {
+	ToolCallID string                `json:"tool_call_id"`
+	Request    ToolCallResultRequest `json:"request"`
 }
 
-// Invoke calls POST /internal/invoke on the orchestrator.
+// ApprovalDecisionArgs wraps approval IDs with the decision payload.
+type ApprovalDecisionArgs struct {
+	ApprovalID string                  `json:"approval_id"`
+	Request    ApprovalDecisionRequest `json:"request"`
+}
+
+// CancelRunRequest identifies a run to cancel.
+type CancelRunRequest struct {
+	RunID string `json:"run_id"`
+}
+
+// AckResponse is a generic OK response.
+type AckResponse struct {
+	OK bool `json:"ok"`
+}
+
+// Invoke calls orchestrator Invoke over RPC.
 func (c *Client) Invoke(ctx context.Context, req *InvokeRequest) (*InvokeResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal invoke request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/internal/invoke", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to invoke orchestrator: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("orchestrator error: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("orchestrator returned status %d: %s", resp.StatusCode, string(respBody))
+	if req == nil {
+		return nil, fmt.Errorf("invoke request is required")
 	}
 
 	var invokeResp InvokeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&invokeResp); err != nil {
-		return nil, fmt.Errorf("failed to decode invoke response: %w", err)
+	if err := c.call(ctx, "Orchestrator.Invoke", req, &invokeResp); err != nil {
+		return nil, fmt.Errorf("failed to invoke orchestrator: %w", err)
 	}
 
 	return &invokeResp, nil
 }
 
-// SubmitToolResult calls POST /internal/tool_calls/:tool_call_id/submit on the orchestrator.
+// SubmitToolResult calls orchestrator SubmitToolResult over RPC.
 func (c *Client) SubmitToolResult(ctx context.Context, toolCallID string, req *ToolCallResultRequest) (*ToolCallResultResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal tool result request: %w", err)
+	if req == nil {
+		return nil, fmt.Errorf("tool result request is required")
 	}
 
-	url := fmt.Sprintf("%s/internal/tool_calls/%s/submit", c.baseURL, toolCallID)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to submit tool result: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("orchestrator error: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("orchestrator returned status %d: %s", resp.StatusCode, string(respBody))
+	args := &ToolCallResultArgs{
+		ToolCallID: toolCallID,
+		Request:    *req,
 	}
 
 	var resultResp ToolCallResultResponse
-	if err := json.NewDecoder(resp.Body).Decode(&resultResp); err != nil {
-		return nil, fmt.Errorf("failed to decode tool result response: %w", err)
+	if err := c.call(ctx, "Orchestrator.SubmitToolResult", args, &resultResp); err != nil {
+		return nil, fmt.Errorf("failed to submit tool result: %w", err)
 	}
 
 	return &resultResp, nil
 }
 
-// SubmitApprovalDecision calls POST /internal/approvals/:approval_id/submit on the orchestrator.
+// SubmitApprovalDecision calls orchestrator SubmitApprovalDecision over RPC.
 func (c *Client) SubmitApprovalDecision(ctx context.Context, approvalID string, req *ApprovalDecisionRequest) (*ApprovalDecisionResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal approval decision request: %w", err)
+	if req == nil {
+		return nil, fmt.Errorf("approval decision request is required")
 	}
 
-	url := fmt.Sprintf("%s/internal/approvals/%s/submit", c.baseURL, approvalID)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	args := &ApprovalDecisionArgs{
+		ApprovalID: approvalID,
+		Request:    *req,
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
+	var ack AckResponse
+	if err := c.call(ctx, "Orchestrator.SubmitApprovalDecision", args, &ack); err != nil {
 		return nil, fmt.Errorf("failed to submit approval decision: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("orchestrator error: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("orchestrator returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var decisionResp ApprovalDecisionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decisionResp); err != nil {
-		return nil, fmt.Errorf("failed to decode approval decision response: %w", err)
-	}
-
-	return &decisionResp, nil
+	return &ApprovalDecisionResponse{}, nil
 }
 
-// CancelRun calls POST /internal/runs/:run_id/cancel on the orchestrator.
+// CancelRun calls orchestrator CancelRun over RPC.
 func (c *Client) CancelRun(ctx context.Context, runID string) (*CancelRunResponse, error) {
-	url := fmt.Sprintf("%s/internal/runs/%s/cancel", c.baseURL, runID)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to cancel run: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		var errResp ErrorResponse
-		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("orchestrator error: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("orchestrator returned status %d: %s", resp.StatusCode, string(respBody))
-	}
+	args := &CancelRunRequest{RunID: runID}
 
 	var cancelResp CancelRunResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cancelResp); err != nil {
-		return nil, fmt.Errorf("failed to decode cancel response: %w", err)
+	if err := c.call(ctx, "Orchestrator.CancelRun", args, &cancelResp); err != nil {
+		return nil, fmt.Errorf("failed to cancel run: %w", err)
 	}
 
 	return &cancelResp, nil
+}
+
+func (c *Client) call(ctx context.Context, method string, args, reply interface{}) error {
+	if c.addr == "" {
+		return fmt.Errorf("orchestrator rpc address is empty")
+	}
+
+	conn, err := net.DialTimeout("tcp", c.addr, c.dialTimeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else if c.callTimeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(c.callTimeout))
+	}
+
+	client := jsonrpc.NewClient(conn)
+	call := client.Go(method, args, reply, nil)
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-call.Done:
+		return call.Error
+	}
+}
+
+func resolveRPCAddr(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "://") {
+		parsed, err := url.Parse(raw)
+		if err == nil && parsed.Host != "" {
+			return parsed.Host
+		}
+	}
+	return raw
 }

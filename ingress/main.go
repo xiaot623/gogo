@@ -15,8 +15,8 @@ import (
 
 	"github.com/xiaot623/gogo/ingress/internal/config"
 	"github.com/xiaot623/gogo/ingress/internal/hub"
-	internalhttp "github.com/xiaot623/gogo/ingress/internal/http"
 	"github.com/xiaot623/gogo/ingress/internal/orchestrator"
+	internalrpc "github.com/xiaot623/gogo/ingress/internal/transport/rpc"
 	"github.com/xiaot623/gogo/ingress/internal/ws"
 )
 
@@ -26,15 +26,15 @@ func main() {
 
 	log.Printf("Starting ingress service...")
 	log.Printf("WebSocket Port: %d", cfg.WSPort)
-	log.Printf("HTTP Port: %d", cfg.HTTPPort)
-	log.Printf("Orchestrator URL: %s", cfg.OrchestratorURL)
+	log.Printf("RPC Port: %d", cfg.RPCPort)
+	log.Printf("Orchestrator RPC Address: %s", cfg.OrchestratorRPCAddr)
 
 	// Initialize hub
 	connectionHub := hub.NewHub()
 	go connectionHub.Run()
 
 	// Initialize orchestrator client
-	orchClient := orchestrator.NewClient(cfg.OrchestratorURL)
+	orchClient := orchestrator.NewClient(cfg.OrchestratorRPCAddr)
 
 	// Initialize WebSocket server
 	wsServer := ws.NewServer(cfg, connectionHub, orchClient)
@@ -46,9 +46,19 @@ func main() {
 	wsEcho.Use(middleware.Logger())
 	wsEcho.Use(middleware.Recover())
 	wsEcho.GET("/ws", wsServer.HandleWebSocket)
+	wsEcho.GET("/health", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status":      "healthy",
+			"connections": connectionHub.GetConnectionCount(),
+			"sessions":    connectionHub.GetSessionCount(),
+		})
+	})
 
-	// Initialize internal HTTP server
-	httpServer := internalhttp.NewServer(connectionHub)
+	// Initialize internal RPC server
+	rpcServer, err := internalrpc.NewServer(connectionHub)
+	if err != nil {
+		log.Fatalf("Failed to initialize RPC server: %v", err)
+	}
 
 	// Start WebSocket server
 	go func() {
@@ -58,16 +68,16 @@ func main() {
 		}
 	}()
 
-	// Start internal HTTP server
+	// Start internal RPC server
 	go func() {
-		addr := fmt.Sprintf(":%d", cfg.HTTPPort)
-		if err := httpServer.Start(addr); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start HTTP server: %v", err)
+		addr := fmt.Sprintf(":%d", cfg.RPCPort)
+		if err := rpcServer.Start(addr); err != nil {
+			log.Fatalf("Failed to start RPC server: %v", err)
 		}
 	}()
 
 	log.Printf("WebSocket server started on port %d", cfg.WSPort)
-	log.Printf("Internal HTTP server started on port %d", cfg.HTTPPort)
+	log.Printf("Internal RPC server started on port %d", cfg.RPCPort)
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -84,8 +94,8 @@ func main() {
 	if err := wsEcho.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Failed to shutdown WebSocket server gracefully: %v", err)
 	}
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Failed to shutdown HTTP server gracefully: %v", err)
+	if err := rpcServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Failed to shutdown RPC server gracefully: %v", err)
 	}
 
 	log.Println("Ingress stopped")

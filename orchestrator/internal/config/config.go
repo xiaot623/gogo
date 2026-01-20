@@ -16,8 +16,8 @@ type Config struct {
 	// Database
 	DatabaseURL string
 
-	// Ingress settings
-	IngressURL string
+	// Ingress settings (RPC address)
+	IngressRPCAddr string
 
 	// LLM Proxy settings (LiteLLM)
 	LiteLLMURL    string
@@ -39,7 +39,7 @@ func Load() *Config {
 		HTTPPort:        getEnvInt("HTTP_PORT", 8080),
 		InternalPort:    getEnvInt("INTERNAL_PORT", 8081),
 		DatabaseURL:     getEnv("DATABASE_URL", "file:orchestrator.db?cache=shared&mode=rwc"),
-		IngressURL:      getEnv("INGRESS_URL", "http://localhost:8090"),
+		IngressRPCAddr:  getEnvWithFallback("INGRESS_RPC_ADDR", "INGRESS_URL", "localhost:8091"),
 		LiteLLMURL:      getEnv("LITELLM_URL", "http://localhost:4000"),
 		LiteLLMAPIKey:   getEnv("LITELLM_API_KEY", ""),
 		AgentTimeout:    time.Duration(getEnvInt("AGENT_TIMEOUT_MS", 300000)) * time.Millisecond,
@@ -49,6 +49,16 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 	return cfg
+}
+
+func getEnvWithFallback(primary, fallback, defaultVal string) string {
+	if val := os.Getenv(primary); val != "" {
+		return val
+	}
+	if val := os.Getenv(fallback); val != "" {
+		return val
+	}
+	return defaultVal
 }
 
 func getEnv(key, defaultVal string) string {

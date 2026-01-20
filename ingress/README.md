@@ -4,7 +4,7 @@ The Ingress service provides WebSocket connectivity between clients and the orch
 
 - **WebSocket connections** for real-time bidirectional communication
 - **Connection management** with session binding and multi-device support
-- **Protocol translation** between WebSocket messages and orchestrator HTTP APIs
+- **Protocol translation** between WebSocket messages and orchestrator RPC APIs
 - **Event fanout** from orchestrator to connected WebSocket clients
 
 ## Architecture
@@ -25,9 +25,8 @@ The Ingress service provides WebSocket connectivity between clients and the orch
 │ └────────────────────────┘   │
 │                              │
 │ ┌────────────────────────┐   │
-│ │ Internal HTTP (:8091)  │   │
-│ │ - POST /internal/send  │   │
-│ │ - GET /health          │   │
+│ │ Internal RPC (:8091)   │   │
+│ │ - PushEvent            │   │
 │ └────────────────────────┘   │
 │                              │
 │ ┌────────────────────────┐   │
@@ -37,7 +36,7 @@ The Ingress service provides WebSocket connectivity between clients and the orch
 │ └────────────────────────┘   │
 └──────────────────────────────┘
        │
-       │ HTTP calls
+       │ RPC calls
        ▼
 ┌──────────────────────────────┐
 │       Orchestrator           │
@@ -48,22 +47,24 @@ The Ingress service provides WebSocket connectivity between clients and the orch
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 8090 | WebSocket | Client connections (`/ws`) |
-| 8091 | HTTP | Internal API (`/internal/send`, `/health`) |
+| 8090 | WebSocket/HTTP | Client connections (`/ws`), health (`/health`) |
+| 8091 | RPC (TCP) | Internal event fanout |
 
 ## Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `WS_PORT` | External WebSocket port | `8090` |
-| `HTTP_PORT` | Internal HTTP port | `8091` |
-| `ORCHESTRATOR_URL` | Orchestrator internal API URL | `http://orchestrator:8081` |
+| `RPC_PORT` | Internal RPC port | `8091` |
+| `ORCHESTRATOR_RPC_ADDR` | Orchestrator RPC address | `orchestrator:8081` |
 | `API_KEY` | Static key for hello.api_key validation | (empty) |
 | `LOG_LEVEL` | Logging level | `info` |
 | `WS_PING_INTERVAL_MS` | WebSocket ping interval | `30000` |
 | `WS_WRITE_TIMEOUT_MS` | WebSocket write timeout | `10000` |
 | `WS_READ_TIMEOUT_MS` | WebSocket read timeout | `60000` |
 | `WS_MAX_MESSAGE_SIZE` | Max message size in bytes | `65536` |
+
+Legacy environment variables `HTTP_PORT` and `ORCHESTRATOR_URL` are still supported.
 
 ## WebSocket Protocol
 
@@ -147,13 +148,13 @@ The Ingress service provides WebSocket connectivity between clients and the orch
 
 #### `run_started`, `delta`, `done`, `error`, `tool_request`, `approval_required`
 
-These events are forwarded from the orchestrator via `POST /internal/send`.
+These events are forwarded from the orchestrator via the `Ingress.PushEvent` RPC call.
 
-## Internal HTTP API
+## HTTP Endpoints (WebSocket server)
 
 ### `GET /health`
 
-Health check endpoint.
+Health check endpoint (served on the WebSocket port).
 
 **Response:**
 ```json
@@ -164,7 +165,9 @@ Health check endpoint.
 }
 ```
 
-### `POST /internal/send`
+## Internal RPC API
+
+### `Ingress.PushEvent`
 
 Receive events from orchestrator and forward to WebSocket clients.
 
@@ -221,5 +224,5 @@ websocat ws://localhost:8090/ws
 
 Health check:
 ```bash
-curl http://localhost:8091/health
+curl http://localhost:8090/health
 ```

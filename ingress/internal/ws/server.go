@@ -229,7 +229,7 @@ func (s *Server) handleAgentInvoke(conn *hub.Connection, data []byte) {
 		}
 
 		log.Printf("Agent invoked successfully: run_id=%s", resp.RunID)
-		// Note: run_started and subsequent events will come via /internal/send
+		// Note: run_started and subsequent events will come via ingress RPC fanout.
 	}()
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/xiaot623/gogo/orchestrator/internal/repository"
 	"github.com/xiaot623/gogo/orchestrator/internal/service"
 	transport "github.com/xiaot623/gogo/orchestrator/internal/transport/http"
+	internalrpc "github.com/xiaot623/gogo/orchestrator/internal/transport/rpc"
 	"github.com/xiaot623/gogo/orchestrator/policy"
 )
 
@@ -26,7 +27,7 @@ func main() {
 
 	log.Printf("Starting orchestrator...")
 	log.Printf("External HTTP Port: %d", cfg.HTTPPort)
-	log.Printf("Internal HTTP Port: %d", cfg.InternalPort)
+	log.Printf("Internal RPC Port: %d", cfg.InternalPort)
 	log.Printf("Database: %s", cfg.DatabaseURL)
 	log.Printf("LiteLLM URL: %s", cfg.LiteLLMURL)
 
@@ -41,7 +42,7 @@ func main() {
 	agentClient := agentclient.NewClient()
 
 	// Initialize ingress client
-	ingressClient := ingress.NewClient(cfg.IngressURL)
+	ingressClient := ingress.NewClient(cfg.IngressRPCAddr)
 
 	// Initialize LLM client
 	llmClient := llm.NewClient(cfg.LiteLLMURL, cfg.LiteLLMAPIKey, cfg.LLMTimeout)
@@ -63,7 +64,10 @@ func main() {
 
 	// Create servers
 	externalServer := transport.NewExternalServer(svc)
-	internalServer := transport.NewInternalServer(svc)
+	rpcServer, err := internalrpc.NewServer(svc)
+	if err != nil {
+		log.Fatalf("Failed to initialize internal RPC server: %v", err)
+	}
 
 	// Start external server
 	go func() {
@@ -73,16 +77,16 @@ func main() {
 		}
 	}()
 
-	// Start internal server
+	// Start internal RPC server
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.InternalPort)
-		if err := internalServer.Start(addr); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start internal server: %v", err)
+		if err := rpcServer.Start(addr); err != nil {
+			log.Fatalf("Failed to start internal RPC server: %v", err)
 		}
 	}()
 
 	log.Printf("External API started on port %d", cfg.HTTPPort)
-	log.Printf("Internal API started on port %d", cfg.InternalPort)
+	log.Printf("Internal RPC started on port %d", cfg.InternalPort)
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -100,8 +104,8 @@ func main() {
 	if err := externalServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Failed to shutdown external server gracefully: %v", err)
 	}
-	if err := internalServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Failed to shutdown internal server gracefully: %v", err)
+	if err := rpcServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Failed to shutdown internal RPC server gracefully: %v", err)
 	}
 
 	log.Println("Orchestrator stopped")

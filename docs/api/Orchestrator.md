@@ -43,6 +43,8 @@ Returns the service health status.
 
 ### Internal API (for Ingress)
 
+> **Note**: Internal ingress calls now use RPC (JSON-RPC over TCP). The HTTP endpoints below are deprecated.
+
 #### `POST /internal/invoke`
 
 Invokes an agent to handle a user message. This endpoint is called by the Ingress service.
@@ -99,7 +101,7 @@ Invokes an agent to handle a user message. This endpoint is called by the Ingres
 **Notes**
 
 - The agent is invoked asynchronously after the response is returned
-- Events are pushed to the Ingress service via `POST /internal/send`
+- Events are pushed to the Ingress service via the `Ingress.PushEvent` RPC call.
 - Events are also persisted and can be replayed via `/v1/runs/:run_id/events`
 
 ---
@@ -462,13 +464,15 @@ The orchestrator is configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HTTP_PORT` | 8080 | HTTP server port |
-| `INTERNAL_PORT` | 8081 | Internal API port |
+| `INTERNAL_PORT` | 8081 | Internal RPC port |
 | `DATABASE_URL` | `file:orchestrator.db?cache=shared&mode=rwc` | SQLite database path |
-| `INGRESS_URL` | `http://localhost:8090` | Ingress service URL |
+| `INGRESS_RPC_ADDR` | `localhost:8091` | Ingress RPC address |
 | `AGENT_TIMEOUT_MS` | 300000 | Agent invocation timeout (5 min) |
 | `TOOL_TIMEOUT_MS` | 60000 | Tool execution timeout |
 | `APPROVAL_TIMEOUT_MS` | 600000 | Approval timeout (10 min) |
 | `LOG_LEVEL` | info | Logging level |
+
+Legacy environment variable `INGRESS_URL` is still supported.
 
 ---
 

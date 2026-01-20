@@ -1257,7 +1257,7 @@ services:
     ports:
       - "8090:8090"     # WebSocket
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8081
+      - ORCHESTRATOR_RPC_ADDR=orchestrator:8081
       - LOG_LEVEL=info
     depends_on:
       - orchestrator
@@ -1286,7 +1286,7 @@ volumes:
 | `TOOL_TIMEOUT_MS`             | orchestrator | 工具执行超时          | `60000`  |
 | `APPROVAL_TIMEOUT_MS`         | orchestrator | 审批超时              | `600000` |
 | `AGENT_HEARTBEAT_INTERVAL_MS` | orchestrator | Agent 心跳间隔        | `30000`  |
-| `ORCHESTRATOR_URL`            | ingress      | Orchestrator 内部地址 | -          |
+| `ORCHESTRATOR_RPC_ADDR`       | ingress      | Orchestrator 内部地址 | -          |
 | `WS_PING_INTERVAL_MS`         | ingress      | WebSocket ping 间隔   | `30000`  |
 | `LOG_LEVEL`                   | all          | 日志级别              | `info`   |
 

@@ -21,7 +21,7 @@ import (
 )
 
 func newTestHandler(t *testing.T) (*Handler, store.Store) {
-	cfg := &config.Config{IngressURL: "", AgentTimeout: time.Second}
+	cfg := &config.Config{IngressRPCAddr: "", AgentTimeout: time.Second}
 	db := helpers.NewTestSQLiteStore(t)
 	client := agentclient.NewClient()
 	ingressClient := ingress.NewClient("")

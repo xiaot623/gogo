@@ -46,10 +46,13 @@ Configure via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HTTP_PORT` | 8080 | HTTP server port |
+| `INTERNAL_PORT` | 8081 | Internal RPC port |
 | `DATABASE_URL` | `file:orchestrator.db?cache=shared&mode=rwc` | SQLite database path |
-| `INGRESS_URL` | `http://localhost:8090` | Ingress service URL for event push |
+| `INGRESS_RPC_ADDR` | `localhost:8091` | Ingress RPC address for event push |
 | `AGENT_TIMEOUT_MS` | 300000 | Agent invocation timeout (5 min) |
 | `LOG_LEVEL` | info | Logging level |
+
+Legacy environment variable `INGRESS_URL` is still supported.
 
 Example:
 
@@ -73,28 +76,7 @@ curl -X POST http://localhost:8080/v1/agents/register \
 
 ### 2. Invoke an Agent
 
-```bash
-curl -X POST http://localhost:8080/internal/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "sess_001",
-    "agent_id": "demo_agent",
-    "input_message": {
-      "role": "user",
-      "content": "Hello, how are you?"
-    }
-  }'
-```
-
-Response:
-
-```json
-{
-  "run_id": "run_abc123",
-  "session_id": "sess_001",
-  "agent_id": "demo_agent"
-}
-```
+Invoke an agent through the ingress WebSocket flow or the internal RPC `Orchestrator.Invoke` method.
 
 ### 3. Get Run Events (Replay)
 
@@ -116,7 +98,7 @@ See [API.md](./API.md) for complete API documentation.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/internal/invoke` | Invoke an agent (from Ingress) |
+| RPC | `Orchestrator.Invoke` | Invoke an agent (from Ingress) |
 | GET | `/v1/runs/:run_id/events` | Get events for replay |
 | GET | `/v1/sessions/:session_id/messages` | Get session messages |
 | POST | `/v1/agents/register` | Register an agent |
@@ -156,7 +138,7 @@ orchestrator/
      │                 └─────────────────────────────────────┘
      │                        Store events/messages
      │
-     └── Push events via POST /internal/send
+     └── Push events via ingress RPC (Ingress.PushEvent)
 ```
 
 ## Event Types
